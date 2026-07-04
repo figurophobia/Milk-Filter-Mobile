@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="mblack">#0d0d14</color>
+    <color name="mgray">#6a3050</color>
+    <color name="mwhite">#ac3232</color>
+    <color name="surface">#13131e</color>
+    <color name="divider">#2a1a28</color>
+</resources>

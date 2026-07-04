@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="Theme.MilkFilter" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/mwhite</item>
+        <item name="colorPrimaryVariant">@color/mgray</item>
+        <item name="colorOnPrimary">@color/mblack</item>
+        <item name="colorSecondary">@color/mgray</item>
+        <item name="android:colorBackground">@color/mblack</item>
+        <item name="android:windowBackground">@color/mblack</item>
+        <item name="android:statusBarColor">@color/mblack</item>
+        <item name="android:navigationBarColor">@color/mblack</item>
+        <item name="android:textColorPrimary">@color/mwhite</item>
+        <item name="android:textColorSecondary">@color/mgray</item>
+        <!-- Override default Material button style to prevent tinting override -->
+        <item name="materialButtonStyle">@style/PixelBtn</item>
+    </style>
+
+    <!-- Base pixel button: uses border 9-patch, no Material tinting -->
+    <style name="PixelBtn" parent="Widget.MaterialComponents.Button">
+        <item name="backgroundTint">@null</item>
+        <item name="android:background">@drawable/bg_panel_selector</item>
+        <item name="android:textColor">@color/mwhite</item>
+        <item name="android:fontFamily">@font/press_start_2p</item>
+        <item name="android:textSize">7sp</item>
+        <item name="android:paddingHorizontal">12dp</item>
+        <item name="android:paddingVertical">12dp</item>
+        <item name="android:letterSpacing">0.02</item>
+        <item name="android:stateListAnimator">@null</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="cornerRadius">0dp</item>
+        <item name="rippleColor">@color/ripple_color</item>
+    </style>
+
+    <style name="PixelBtn.Tab">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:paddingVertical">14dp</item>
+        <item name="android:textSize">7sp</item>
+    </style>
+
+    <style name="PixelBtn.Action">
+        <item name="android:paddingVertical">14dp</item>
+        <item name="android:paddingHorizontal">16dp</item>
+        <item name="android:textSize">11sp</item>
+    </style>
+
+    <style name="PixelText">
+        <item name="android:fontFamily">@font/press_start_2p</item>
+        <item name="android:textColor">@color/mwhite</item>
+        <item name="android:textSize">8sp</item>
+    </style>
+
+    <style name="PixelText.Secondary">
+        <item name="android:textColor">@color/mgray</item>
+    </style>
+
+    <style name="PixelText.Tiny">
+        <item name="android:textSize">6sp</item>
+        <item name="android:textColor">@color/mgray</item>
+    </style>
+
+</resources>

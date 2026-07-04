@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/main"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/mblack">
+
+    <!-- Full-area image -->
+    <ImageView
+        android:id="@+id/resultImage"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:scaleType="fitCenter"
+        android:background="@color/mblack"
+        android:contentDescription="@string/image_desc"
+        app:layout_constraintTop_toBottomOf="@id/topBar"
+        app:layout_constraintBottom_toTopOf="@id/bottomBar"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Empty-state placeholder -->
+    <FrameLayout
+        android:id="@+id/emptyPlaceholder"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="visible"
+        app:layout_constraintTop_toBottomOf="@id/topBar"
+        app:layout_constraintBottom_toTopOf="@id/bottomBar"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:orientation="vertical"
+            android:gravity="center">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="+"
+                android:textColor="@color/mgray"
+                android:textSize="40sp"
+                android:fontFamily="@font/press_start_2p" />
+
+            <TextView
+                android:id="@+id/placeholderText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Tap to add an image"
+                android:textColor="@color/mgray"
+                android:textSize="12sp"
+                android:fontFamily="@font/press_start_2p"
+                android:layout_marginTop="20dp"
+                android:gravity="center"
+                android:lineSpacingMultiplier="1.8" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- Top bar: FrameLayout so reset(left) and done(right) can coexist with title -->
+    <FrameLayout
+        android:id="@+id/topBar"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:paddingHorizontal="16dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="12dp"
+        android:background="@color/mblack"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <!-- Shown in non-edit states -->
+        <TextView
+            android:id="@+id/titleText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_vertical|start"
+            android:text="MILK FILTER\nMOBILE"
+            android:fontFamily="@font/press_start_2p"
+            android:textColor="@color/mwhite"
+            android:textSize="11sp"
+            android:lineSpacingMultiplier="1.4" />
+
+        <!-- Shown in EDITING state – left -->
+        <Button
+            android:id="@+id/resetBtn"
+            style="@style/PixelBtn.Action"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_vertical|start"
+            android:text="RESET"
+            android:visibility="gone" />
+
+        <!-- Shown in EDITING state – right -->
+        <Button
+            android:id="@+id/doneBtn"
+            style="@style/PixelBtn.Action"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_vertical|end"
+            android:text="DONE"
+            android:visibility="gone" />
+    </FrameLayout>
+
+    <!-- Progress bar -->
+    <ProgressBar
+        android:id="@+id/progressBar"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="0dp"
+        android:layout_height="4dp"
+        android:indeterminate="true"
+        android:progressTint="@color/mwhite"
+        android:indeterminateTint="@color/mwhite"
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/bottomBar"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Bottom bar -->
+    <FrameLayout
+        android:id="@+id/bottomBar"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <!-- PREVIEW: EDIT button -->
+        <Button
+            android:id="@+id/editBtn"
+            style="@style/PixelBtn.Action"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:layout_margin="16dp"
+            android:text="EDIT"
+            android:visibility="gone" />
+
+        <!-- EDITING: edit panel -->
+        <include
+            android:id="@+id/editPanel"
+            layout="@layout/bottom_edit_panel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:visibility="gone" />
+
+        <!-- POST_EDIT: share + download + edit -->
+        <LinearLayout
+            android:id="@+id/postEditBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:background="@drawable/bg_bottom_panel"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/shareBtn"
+                    style="@style/PixelBtn.Action"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="SHARE" />
+
+                <Button
+                    android:id="@+id/downloadBtn"
+                    style="@style/PixelBtn.Action"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="8dp"
+                    android:text="DOWNLOAD" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/editAgainBtn"
+                style="@style/PixelBtn.Action"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="EDIT"
+                android:textSize="11sp" />
+        </LinearLayout>
+    </FrameLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

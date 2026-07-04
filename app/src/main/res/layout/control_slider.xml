@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:paddingHorizontal="16dp"
+    android:paddingVertical="16dp"
+    android:gravity="center_vertical">
+
+    <TextView
+        android:id="@+id/sliderLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:fontFamily="@font/press_start_2p"
+        android:textSize="10sp"
+        android:textColor="@color/mwhite"
+        android:minWidth="72dp" />
+
+    <SeekBar
+        android:id="@+id/slider"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginHorizontal="12dp"
+        android:progressTint="@color/mwhite"
+        android:thumbTint="@color/mwhite" />
+
+    <TextView
+        android:id="@+id/sliderValue"
+        android:layout_width="56dp"
+        android:layout_height="wrap_content"
+        android:fontFamily="@font/press_start_2p"
+        android:textSize="10sp"
+        android:textColor="@color/mwhite"
+        android:gravity="end" />
+</LinearLayout>

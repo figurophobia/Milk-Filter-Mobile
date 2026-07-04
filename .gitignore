@@ -1,0 +1,40 @@
+# Built artifacts
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Build dirs
+build/
+.gradle/
+app/build/
+
+# Local config
+local.properties
+*.iml
+
+# IDE
+.idea/workspace.xml
+.idea/tasks.xml
+.idea/gradle.xml
+.idea/assetWizardSettings.xml
+.idea/dictionaries
+.idea/libraries
+.idea/modules.xml
+.DS_Store
+.idea/caches/
+captures/
+
+# Keys & signing
+*.jks
+*.keystore
+
+
+# Logs
+*.log
+
+# Proguard
+proguard/
+
+# Google services
+google-services.json
