@@ -29,4 +29,26 @@ class FilterProcessorTest {
         val out = FilterProcessor.buildExpandedPalette(base, 1)
         assertEquals(2, out.size)
     }
+
+    @Test
+    fun milkNoise_isDeterministicForSameCoords() {
+        val a = FilterProcessor.milkNoise(10, 20, 0)
+        val b = FilterProcessor.milkNoise(10, 20, 0)
+        assertEquals(a, b, 0.0f)
+    }
+
+    @Test
+    fun milkNoise_inUnitRange() {
+        for (i in 0 until 500) {
+            val v = FilterProcessor.milkNoise(i, i * 7, i % 3)
+            assert(v in 0f..1f) { "noise out of range: $v" }
+        }
+    }
+
+    @Test
+    fun milkNoise_variesAcrossPixels() {
+        val v0 = FilterProcessor.milkNoise(0, 0, 0)
+        val v1 = FilterProcessor.milkNoise(1, 0, 0)
+        assert(v0 != v1) { "noise identical for neighbouring pixels" }
+    }
 }

@@ -75,6 +75,15 @@ object FilterProcessor {
     private fun clamp(v: Float, lo: Float, hi: Float) = max(lo, min(hi, v))
     private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t
 
+    // Deterministic hash-based noise in [0,1). Replaces java.util.Random so the
+    // Milk filter is stable across reprocesses and coherent across video frames.
+    internal fun milkNoise(x: Int, y: Int, frame: Int): Float {
+        var h = x * 374761393 + y * 668265263 + frame * 2246822519.toInt()
+        h = (h xor (h ushr 13)) * 1274126177
+        h = h xor (h ushr 16)
+        return (h and 0x7fffffff) / 2147483647.0f
+    }
+
     internal fun buildExpandedPalette(base: List<IntArray>, count: Int): List<IntArray> {
         val n = max(2, count)
         if (n == base.size) return base
@@ -141,7 +150,7 @@ object FilterProcessor {
         return result
     }
 
-    fun processMilk(source: Bitmap, state: MilkState): Bitmap {
+    fun processMilk(source: Bitmap, state: MilkState, frame: Int = 0): Bitmap {
         val mBri = MILK_LEVELS["brightness"]!![state.brightnessIdx]
         val mCon = MILK_LEVELS["contrast"]!![state.contrastIdx]
         val key = MILK_PALETTE_KEYS[state.paletteIdx]
@@ -170,10 +179,13 @@ object FilterProcessor {
         work.getPixels(pixels, 0, w, 0, 0, w, h)
         if (work !== source) work.recycle()
 
-        val rng = java.util.Random()
         for (i in pixels.indices) {
             val color = pixels[i]
             if (Color.alpha(color) == 0) continue
+
+            val px = i % w
+            val py = i / w
+            val noise = milkNoise(px, py, frame)
 
             var lum = (Color.red(color) + Color.green(color) + Color.blue(color)) / 3f
             if (adjustBC) {
@@ -183,10 +195,10 @@ object FilterProcessor {
 
             val c = when {
                 lum <= 25  -> colors[0]
-                lum <= 70  -> if (rng.nextFloat() < punt) colors[0] else colors[1]
-                lum < mid1 -> if (rng.nextFloat() < punt) colors[1] else colors[0]
+                lum <= 70  -> if (noise < punt) colors[0] else colors[1]
+                lum < mid1 -> if (noise < punt) colors[1] else colors[0]
                 lum < mid2 -> colors[1]
-                lum < 230  -> if (rng.nextFloat() < punt) colors[2] else colors[1]
+                lum < 230  -> if (noise < punt) colors[2] else colors[1]
                 else       -> colors[2]
             }
             pixels[i] = Color.rgb(c[0], c[1], c[2])
