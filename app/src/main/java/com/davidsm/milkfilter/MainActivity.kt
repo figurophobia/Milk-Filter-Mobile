@@ -11,6 +11,7 @@ import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.snackbar.Snackbar
 import kotlinx.coroutines.Dispatchers
@@ -33,14 +34,15 @@ class MainActivity : AppCompatActivity() {
 
     private var appState     = AppState.EMPTY
     private var activeTool: Tool? = null
-    private var activeFilter = "dither"
     private var currentLang  = "en"
-    private var sourceBitmap: Bitmap? = null
-    private var resultBitmap: Bitmap? = null
     private val toolChips = mutableMapOf<Tool, TextView>()
 
-    private val ditherState = FilterProcessor.DitherState()
-    private val milkState   = FilterProcessor.MilkState()
+    private val vm: EditorViewModel by lazy { ViewModelProvider(this)[EditorViewModel::class.java] }
+
+    private val activeFilter get() = vm.activeFilter
+    private val ditherState  get() = vm.ditherState
+    private val milkState    get() = vm.milkState
+    private var resultBitmap: Bitmap? = null   // last observed result, for share/save
 
     private lateinit var resultImage:      ImageView
     private lateinit var emptyPlaceholder: FrameLayout
@@ -77,7 +79,8 @@ class MainActivity : AppCompatActivity() {
             "placeholderTap" to "Tap to add\nan image",
             "btnEdit"        to "EDIT",         "btnDone"       to "DONE",
             "btnShare"       to "SHARE",        "btnDownload"   to "DOWNLOAD",
-            "saveFailed"     to "Could not save."
+            "saveFailed"     to "Could not save.",
+            "loadFailed"     to "Could not open file."
         ),
         "es" to mapOf(
             "brightness"     to "BRILLO",       "contrast"      to "CONTRASTE",
@@ -90,7 +93,8 @@ class MainActivity : AppCompatActivity() {
             "placeholderTap" to "Toca para añadir\nuna imagen",
             "btnEdit"        to "EDITAR",       "btnDone"       to "LISTO",
             "btnShare"       to "COMPARTIR",    "btnDownload"   to "DESCARGAR",
-            "saveFailed"     to "No se pudo guardar."
+            "saveFailed"     to "No se pudo guardar.",
+            "loadFailed"     to "No se pudo abrir el archivo."
         )
     )
     private fun t(key: String) = strings[currentLang]?.get(key) ?: strings["en"]?.get(key) ?: key
@@ -101,6 +105,15 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
         bindViews()
         applyState(AppState.EMPTY)
+
+        vm.resultBitmap.observe(this) { bmp ->
+            resultBitmap = bmp
+            if (bmp != null) {
+                resultImage.setImageBitmap(bmp)
+                if (appState == AppState.EMPTY) applyState(AppState.PREVIEW)
+            }
+        }
+        vm.processing.observe(this) { showProgress(it) }
     }
 
     private fun bindViews() {
@@ -169,7 +182,7 @@ class MainActivity : AppCompatActivity() {
         controlZone.removeAllViews(); controlZone.visibility = View.GONE
         refreshToolStrip()
         if (tool != null) { activeTool = tool; showControlFor(tool); updateChipStyles() }
-        if (sourceBitmap != null) triggerProcess()
+        triggerProcess()
     }
 
     private fun refreshToolStrip() {
@@ -235,8 +248,8 @@ class MainActivity : AppCompatActivity() {
             }
         }
         update()
-        db.setOnClickListener { if (activeFilter != "dither") { activeFilter = "dither"; refreshToolStrip(); activeTool = Tool.FILTER; showControlFor(Tool.FILTER); updateChipStyles(); if (sourceBitmap != null) triggerProcess() } }
-        mb.setOnClickListener { if (activeFilter != "milk")   { activeFilter = "milk";   refreshToolStrip(); activeTool = Tool.FILTER; showControlFor(Tool.FILTER); updateChipStyles(); if (sourceBitmap != null) triggerProcess() } }
+        db.setOnClickListener { if (activeFilter != "dither") { vm.activeFilter = "dither"; refreshToolStrip(); activeTool = Tool.FILTER; showControlFor(Tool.FILTER); updateChipStyles(); triggerProcess() } }
+        mb.setOnClickListener { if (activeFilter != "milk")   { vm.activeFilter = "milk";   refreshToolStrip(); activeTool = Tool.FILTER; showControlFor(Tool.FILTER); updateChipStyles(); triggerProcess() } }
         controlZone.addView(view)
     }
 
@@ -270,13 +283,13 @@ class MainActivity : AppCompatActivity() {
             val k = keys()
             if (activeFilter == "dither") ditherState.paletteIdx = wrapIdx(ditherState.paletteIdx - 1, k.size)
             else milkState.paletteIdx = wrapIdx(milkState.paletteIdx - 1, k.size)
-            syncColors(); render(); if (sourceBitmap != null) triggerProcess()
+            syncColors(); render(); triggerProcess()
         }
         nextBtn.setOnClickListener {
             val k = keys()
             if (activeFilter == "dither") ditherState.paletteIdx = wrapIdx(ditherState.paletteIdx + 1, k.size)
             else milkState.paletteIdx = wrapIdx(milkState.paletteIdx + 1, k.size)
-            syncColors(); render(); if (sourceBitmap != null) triggerProcess()
+            syncColors(); render(); triggerProcess()
         }
         controlZone.addView(view)
     }
@@ -288,7 +301,7 @@ class MainActivity : AppCompatActivity() {
         valueText.text = format(levels[initIdx])
         slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
-                onChanged(p); valueText.text = format(levels[p]); if (sourceBitmap != null) triggerProcess()
+                onChanged(p); valueText.text = format(levels[p]); triggerProcess()
             }
             override fun onStartTrackingTouch(sb: SeekBar) {}
             override fun onStopTrackingTouch(sb: SeekBar) {}
@@ -327,7 +340,7 @@ class MainActivity : AppCompatActivity() {
         fun isOn() = tool == Tool.POINTILLISM && milkState.pointillism
         fun update() { btn.text = if (isOn()) t("on") else t("off") }
         update()
-        btn.setOnClickListener { if (tool == Tool.POINTILLISM) milkState.pointillism = !milkState.pointillism; update(); if (sourceBitmap != null) triggerProcess() }
+        btn.setOnClickListener { if (tool == Tool.POINTILLISM) milkState.pointillism = !milkState.pointillism; update(); triggerProcess() }
         controlZone.addView(view)
     }
 
@@ -345,7 +358,7 @@ class MainActivity : AppCompatActivity() {
             levelSlider.max = lv.size - 1; levelSlider.progress = milkState.compressionLevelIdx
             levelValue.text = "${lv[milkState.compressionLevelIdx].toInt()}%"
             levelSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) { milkState.compressionLevelIdx = p; levelValue.text = "${lv[p].toInt()}%"; if (sourceBitmap != null) triggerProcess() }
+                override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) { milkState.compressionLevelIdx = p; levelValue.text = "${lv[p].toInt()}%"; triggerProcess() }
                 override fun onStartTrackingTouch(sb: SeekBar) {}
                 override fun onStopTrackingTouch(sb: SeekBar) {}
             })
@@ -356,7 +369,7 @@ class MainActivity : AppCompatActivity() {
             if (milkState.compression) updateLevel()
         }
         update()
-        btn.setOnClickListener { milkState.compression = !milkState.compression; update(); if (sourceBitmap != null) triggerProcess() }
+        btn.setOnClickListener { milkState.compression = !milkState.compression; update(); triggerProcess() }
         controlZone.addView(view)
     }
 
@@ -364,8 +377,12 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             showProgress(true)
             val bmp = withContext(Dispatchers.IO) { decodeSampled(uri, 1500) }
-            if (bmp != null) { sourceBitmap?.recycle(); sourceBitmap = bmp; triggerProcess() }
-            else showProgress(false)
+            if (bmp != null) {
+                vm.setImageSource(bmp)
+            } else {
+                showProgress(false)
+                Snackbar.make(findViewById(R.id.main), t("loadFailed"), Snackbar.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -377,17 +394,7 @@ class MainActivity : AppCompatActivity() {
     } catch (e: Exception) { null }
 
     private fun triggerProcess() {
-        val src = sourceBitmap ?: return
-        lifecycleScope.launch {
-            showProgress(true)
-            val result = withContext(Dispatchers.Default) {
-                if (activeFilter == "dither") FilterProcessor.processDither(src, ditherState)
-                else FilterProcessor.processMilk(src, milkState)
-            }
-            resultBitmap?.recycle(); resultBitmap = result
-            resultImage.setImageBitmap(result); showProgress(false)
-            if (appState == AppState.EMPTY) applyState(AppState.PREVIEW)
-        }
+        vm.reprocessImage()
     }
 
     private fun openSavePicker() {
