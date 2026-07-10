@@ -75,7 +75,7 @@ object FilterProcessor {
     private fun clamp(v: Float, lo: Float, hi: Float) = max(lo, min(hi, v))
     private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t
 
-    private fun buildExpandedPalette(base: List<IntArray>, count: Int): List<IntArray> {
+    internal fun buildExpandedPalette(base: List<IntArray>, count: Int): List<IntArray> {
         val n = max(2, count)
         if (n == base.size) return base
         val segs = base.size - 1
