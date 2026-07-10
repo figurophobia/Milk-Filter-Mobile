@@ -41,7 +41,7 @@ class FilterProcessorTest {
     fun milkNoise_inUnitRange() {
         for (i in 0 until 500) {
             val v = FilterProcessor.milkNoise(i, i * 7, i % 3)
-            assert(v in 0f..1f) { "noise out of range: $v" }
+            assert(v >= 0f && v < 1f) { "noise out of range: $v" }
         }
     }
 

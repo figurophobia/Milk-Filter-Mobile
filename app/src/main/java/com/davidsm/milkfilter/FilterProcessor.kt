@@ -81,7 +81,7 @@ object FilterProcessor {
         var h = x * 374761393 + y * 668265263 + frame * 2246822519.toInt()
         h = (h xor (h ushr 13)) * 1274126177
         h = h xor (h ushr 16)
-        return (h and 0x7fffffff) / 2147483647.0f
+        return (h and 0x7fffffff) / 2147483648.0f
     }
 
     internal fun buildExpandedPalette(base: List<IntArray>, count: Int): List<IntArray> {
