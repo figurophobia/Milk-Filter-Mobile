@@ -79,6 +79,7 @@ class MainActivity : AppCompatActivity() {
             "placeholderTap" to "Tap to add\nan image",
             "btnEdit"        to "EDIT",         "btnDone"       to "DONE",
             "btnShare"       to "SHARE",        "btnDownload"   to "DOWNLOAD",
+            "saved"          to "✓ Saved",
             "saveFailed"     to "Could not save.",
             "loadFailed"     to "Could not open file."
         ),
@@ -93,6 +94,7 @@ class MainActivity : AppCompatActivity() {
             "placeholderTap" to "Toca para añadir\nuna imagen",
             "btnEdit"        to "EDITAR",       "btnDone"       to "LISTO",
             "btnShare"       to "COMPARTIR",    "btnDownload"   to "DESCARGAR",
+            "saved"          to "✓ Guardado",
             "saveFailed"     to "No se pudo guardar.",
             "loadFailed"     to "No se pudo abrir el archivo."
         )
@@ -142,7 +144,9 @@ class MainActivity : AppCompatActivity() {
         downloadBtn.text  = t("btnDownload")
 
         emptyPlaceholder.setOnClickListener { pickImage.launch("image/*") }
-        resultImage.setOnClickListener      { if (appState != AppState.EDITING) pickImage.launch("image/*") }
+        resultImage.setOnClickListener {
+            if (appState == AppState.EMPTY || appState == AppState.PREVIEW) pickImage.launch("image/*")
+        }
         editBtn.setOnClickListener          { enterEditMode() }
         editAgainBtn.setOnClickListener     { enterEditMode() }
         resetBtn.setOnClickListener         { resetCurrentFilter() }
@@ -410,7 +414,7 @@ class MainActivity : AppCompatActivity() {
                 catch (e: Exception) { false }
             }
             showProgress(false)
-            Snackbar.make(findViewById(R.id.main), if (ok) "✓ Saved" else t("saveFailed"), Snackbar.LENGTH_SHORT).show()
+            Snackbar.make(findViewById(R.id.main), if (ok) t("saved") else t("saveFailed"), Snackbar.LENGTH_SHORT).show()
         }
     }
 
