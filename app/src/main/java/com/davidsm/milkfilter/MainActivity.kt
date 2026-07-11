@@ -3,6 +3,9 @@ package com.davidsm.milkfilter
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.MediaExtractor
+import android.media.MediaFormat
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Bundle
 import android.view.View
@@ -60,8 +63,22 @@ class MainActivity : AppCompatActivity() {
     private lateinit var editAgainBtn:     Button
     private lateinit var progressBar:      ProgressBar
 
-    private val pickImage = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        uri?.let { loadImageFrom(it) }
+    private val pickMedia = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let { onMediaPicked(it) }
+    }
+
+    private fun openPicker() {
+        // GetContent takes a single MIME; use a wildcard and filter in onMediaPicked.
+        pickMedia.launch("*/*")
+    }
+
+    private fun onMediaPicked(uri: Uri) {
+        val type = contentResolver.getType(uri) ?: ""
+        when {
+            type.startsWith("video/") -> loadVideoFrom(uri)
+            type.startsWith("image/") -> loadImageFrom(uri)
+            else -> Snackbar.make(findViewById(R.id.main), t("unsupported"), Snackbar.LENGTH_SHORT).show()
+        }
     }
     private val savePicker = registerForActivityResult(
         ActivityResultContracts.CreateDocument("image/png")
@@ -81,7 +98,9 @@ class MainActivity : AppCompatActivity() {
             "btnShare"       to "SHARE",        "btnDownload"   to "DOWNLOAD",
             "saved"          to "✓ Saved",
             "saveFailed"     to "Could not save.",
-            "loadFailed"     to "Could not open file."
+            "loadFailed"     to "Could not open file.",
+            "unsupported"    to "Unsupported file type.",
+            "placeholderTapMedia" to "Tap to add\nimage or video"
         ),
         "es" to mapOf(
             "brightness"     to "BRILLO",       "contrast"      to "CONTRASTE",
@@ -96,7 +115,9 @@ class MainActivity : AppCompatActivity() {
             "btnShare"       to "COMPARTIR",    "btnDownload"   to "DESCARGAR",
             "saved"          to "✓ Guardado",
             "saveFailed"     to "No se pudo guardar.",
-            "loadFailed"     to "No se pudo abrir el archivo."
+            "loadFailed"     to "No se pudo abrir el archivo.",
+            "unsupported"    to "Tipo de archivo no soportado.",
+            "placeholderTapMedia" to "Toca para añadir\nimagen o vídeo"
         )
     )
     private fun t(key: String) = strings[currentLang]?.get(key) ?: strings["en"]?.get(key) ?: key
@@ -135,7 +156,7 @@ class MainActivity : AppCompatActivity() {
         editAgainBtn     = findViewById(R.id.editAgainBtn)
         progressBar      = findViewById(R.id.progressBar)
 
-        findViewById<TextView>(R.id.placeholderText).text = t("placeholderTap")
+        findViewById<TextView>(R.id.placeholderText).text = t("placeholderTapMedia")
         resetBtn.text     = t("reset")
         doneBtn.text      = t("btnDone")
         editBtn.text      = t("btnEdit")
@@ -143,9 +164,9 @@ class MainActivity : AppCompatActivity() {
         shareBtn.text     = t("btnShare")
         downloadBtn.text  = t("btnDownload")
 
-        emptyPlaceholder.setOnClickListener { pickImage.launch("image/*") }
+        emptyPlaceholder.setOnClickListener { openPicker() }
         resultImage.setOnClickListener {
-            if (appState == AppState.EMPTY || appState == AppState.PREVIEW) pickImage.launch("image/*")
+            if (appState == AppState.EMPTY || appState == AppState.PREVIEW) openPicker()
         }
         editBtn.setOnClickListener          { enterEditMode() }
         editAgainBtn.setOnClickListener     { enterEditMode() }
@@ -375,6 +396,47 @@ class MainActivity : AppCompatActivity() {
         update()
         btn.setOnClickListener { milkState.compression = !milkState.compression; update(); triggerProcess() }
         controlZone.addView(view)
+    }
+
+    private fun probeVideo(uri: Uri): VideoInfo? = try {
+        val mmr = MediaMetadataRetriever()
+        mmr.setDataSource(this, uri)
+        val w = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+        val h = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+        val durMs = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+        val rot = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+        mmr.release()
+
+        // fps + audio presence via MediaExtractor
+        var fps = 30
+        var hasAudio = false
+        val ex = MediaExtractor()
+        ex.setDataSource(this, uri, null)
+        for (i in 0 until ex.trackCount) {
+            val fmt = ex.getTrackFormat(i)
+            val mime = fmt.getString(MediaFormat.KEY_MIME) ?: ""
+            if (mime.startsWith("video/") && fmt.containsKey(MediaFormat.KEY_FRAME_RATE)) {
+                fps = fmt.getInteger(MediaFormat.KEY_FRAME_RATE).coerceIn(1, 60)
+            }
+            if (mime.startsWith("audio/")) hasAudio = true
+        }
+        ex.release()
+
+        if (w <= 0 || h <= 0) null else VideoInfo(w, h, durMs, rot, fps, hasAudio)
+    } catch (e: Exception) { null }
+
+    private fun loadVideoFrom(uri: Uri) {
+        val info = probeVideo(uri)
+        if (info == null) {
+            Snackbar.make(findViewById(R.id.main), t("loadFailed"), Snackbar.LENGTH_SHORT).show()
+            return
+        }
+        // Wired to the preview controller + states in Task 8.
+        startVideoSession(uri, info)
+    }
+
+    private fun startVideoSession(uri: Uri, info: VideoInfo) {
+        // Implemented in Task 8.
     }
 
     private fun loadImageFrom(uri: Uri) {
