@@ -7,6 +7,7 @@ import android.net.Uri
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -43,7 +44,7 @@ class VideoPreviewController(
             try {
                 while (isActive) {
                     var tUs = 0L
-                    while (isActive && tUs < durUs) {
+                    while (isActive && tUs < maxOf(durUs, frameIntervalUs)) {
                         val raw = withContext(Dispatchers.IO) {
                             mmr.getFrameAtTime(tUs, MediaMetadataRetriever.OPTION_CLOSEST)
                         }
@@ -62,7 +63,7 @@ class VideoPreviewController(
                     }
                 }
             } finally {
-                withContext(Dispatchers.IO) { runCatching { mmr.release() } }
+                withContext(NonCancellable + Dispatchers.IO) { runCatching { mmr.release() } }
             }
         }
     }

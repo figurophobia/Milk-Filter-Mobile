@@ -143,6 +143,11 @@ class MainActivity : AppCompatActivity() {
         vm.processing.observe(this) { showProgress(it) }
     }
 
+    override fun onDestroy() {
+        previewController?.stop()
+        super.onDestroy()
+    }
+
     private fun bindViews() {
         resultImage      = findViewById(R.id.resultImage)
         emptyPlaceholder = findViewById(R.id.emptyPlaceholder)
