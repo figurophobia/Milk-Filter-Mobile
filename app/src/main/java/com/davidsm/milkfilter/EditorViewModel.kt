@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -27,12 +28,16 @@ class EditorViewModel : ViewModel() {
     private var processJob: Job? = null
 
     fun setImageSource(bitmap: Bitmap) {
-        // Old source stays alive until any in-flight job is cancelled (bug 1).
-        processJob?.cancel()
         val old = sourceBitmap
         sourceBitmap = bitmap
-        old?.recycle()
-        reprocessImage()
+        // Recycle the old source only AFTER the in-flight job has fully finished,
+        // otherwise a still-running (cooperatively-cancelled) job may read it
+        // while we recycle it, crashing with "recycled bitmap" (bug 1).
+        viewModelScope.launch {
+            processJob?.cancelAndJoin()
+            old?.recycle()
+            reprocessImage()
+        }
     }
 
     /** Cancels any in-flight processing (conflation: only the latest matters). */
