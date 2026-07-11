@@ -33,37 +33,44 @@ class VideoPreviewController(
         this.filter = filter; this.dither = dither; this.milk = milk
     }
 
-    fun start(onFrame: (Bitmap) -> Unit) {
+    fun start(onFrame: (Bitmap) -> Unit, onError: () -> Unit = {}) {
         loop?.cancel()
         loop = scope.launch {
             val mmr = MediaMetadataRetriever()
-            withContext(Dispatchers.IO) { mmr.setDataSource2(resolver, uri) }
-            val durUs = info.durationMs * 1000
-            val frameIntervalUs = 1_000_000L / previewFps.coerceAtLeast(1)
-            var frameIndex = 0
             try {
-                while (isActive) {
-                    var tUs = 0L
-                    while (isActive && tUs < maxOf(durUs, frameIntervalUs)) {
-                        val raw = withContext(Dispatchers.IO) {
-                            mmr.getFrameAtTime(tUs, MediaMetadataRetriever.OPTION_CLOSEST)
+                withContext(Dispatchers.IO) { mmr.setDataSource2(resolver, uri) }
+                val durUs = info.durationMs * 1000
+                val frameIntervalUs = 1_000_000L / previewFps.coerceAtLeast(1)
+                var frameIndex = 0
+                try {
+                    while (isActive) {
+                        var tUs = 0L
+                        while (isActive && tUs < maxOf(durUs, frameIntervalUs)) {
+                            val raw = withContext(Dispatchers.IO) {
+                                mmr.getFrameAtTime(tUs, MediaMetadataRetriever.OPTION_CLOSEST)
+                            }
+                            if (raw != null) {
+                                val scaled = scaleForPreview(raw)
+                                if (scaled !== raw) raw.recycle()
+                                val filtered = if (filter == "dither")
+                                    FilterProcessor.processDither(scaled, dither)
+                                else FilterProcessor.processMilk(scaled, milk, frameIndex)
+                                if (filtered !== scaled) scaled.recycle()
+                                withContext(Dispatchers.Main) { onFrame(filtered) }
+                                frameIndex++
+                            }
+                            tUs += frameIntervalUs
+                            delay(1000L / previewFps)
                         }
-                        if (raw != null) {
-                            val scaled = scaleForPreview(raw)
-                            if (scaled !== raw) raw.recycle()
-                            val filtered = if (filter == "dither")
-                                FilterProcessor.processDither(scaled, dither)
-                            else FilterProcessor.processMilk(scaled, milk, frameIndex)
-                            if (filtered !== scaled) scaled.recycle()
-                            withContext(Dispatchers.Main) { onFrame(filtered) }
-                            frameIndex++
-                        }
-                        tUs += frameIntervalUs
-                        delay(1000L / previewFps)
                     }
+                } finally {
+                    withContext(NonCancellable + Dispatchers.IO) { runCatching { mmr.release() } }
                 }
-            } finally {
-                withContext(NonCancellable + Dispatchers.IO) { runCatching { mmr.release() } }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("VideoPreviewController", "preview failed", e)
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) { onError() }
             }
         }
     }

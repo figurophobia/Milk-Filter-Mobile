@@ -157,6 +157,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         previewController?.stop()
+        resultVideo.stopPlayback()
         super.onDestroy()
     }
 
@@ -477,6 +478,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startVideoSession(uri: Uri, info: VideoInfo) {
+        vm.releaseImageSession()
         previewController?.stop()
         if (currentVideo?.uri != uri) renderedVideoFile = null   // fresh video: drop stale render
         currentVideo = MediaJob.Video(uri, info)
@@ -487,11 +489,14 @@ class MainActivity : AppCompatActivity() {
         resultVideo.stopPlayback()
         resultVideo.visibility = View.GONE
         showProgress(true)
-        pc.start { bmp ->
+        pc.start(onFrame = { bmp ->
             showProgress(false)
             resultImage.setImageBitmap(bmp)
             if (appState == AppState.EMPTY) applyState(AppState.PREVIEW)
-        }
+        }, onError = {
+            showProgress(false)
+            Snackbar.make(findViewById(R.id.main), t("loadFailed"), Snackbar.LENGTH_SHORT).show()
+        })
     }
 
     private fun loadImageFrom(uri: Uri) {

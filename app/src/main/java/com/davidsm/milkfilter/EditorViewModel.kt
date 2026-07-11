@@ -61,6 +61,13 @@ class EditorViewModel : ViewModel() {
         _resultBitmap.value = null
     }
 
+    /** Cancel any in-flight image processing and drop the image source when leaving the photo pipeline. */
+    fun releaseImageSession() {
+        processJob?.cancel()
+        sourceBitmap?.recycle(); sourceBitmap = null
+        _resultBitmap.value = null   // don't recycle: it may still be shown until the video preview overwrites it
+    }
+
     override fun onCleared() {
         processJob?.cancel()
         sourceBitmap?.recycle()

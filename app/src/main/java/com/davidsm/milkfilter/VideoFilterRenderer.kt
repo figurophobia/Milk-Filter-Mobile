@@ -13,6 +13,7 @@ import android.net.Uri
 import com.davidsm.milkfilter.gl.BitmapRenderer
 import com.davidsm.milkfilter.gl.CodecInputSurface
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.ByteBuffer
@@ -35,7 +36,23 @@ class VideoFilterRenderer(
         outFile: File,
         onProgress: (Int) -> Unit
     ): Boolean = withContext(Dispatchers.Default) {
-        val (outW, outH) = fitWithinCap(info.width, info.height, 720)
+        // Derive output dimensions from a real decoded frame: getFrameAtTime returns
+        // rotation-corrected bitmaps, so using info.width/height (coded, pre-rotation)
+        // would squash portrait video into a landscape canvas.
+        val probeMmr = MediaMetadataRetriever()
+        val (outW, outH) = try {
+            resolver.openFileDescriptor(uri, "r")!!.use { pfd -> probeMmr.setDataSource(pfd.fileDescriptor) }
+            val pf = probeMmr.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                ?: probeMmr.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST)
+            val dims = if (pf != null) fitWithinCap(pf.width, pf.height, 720)
+                       else fitWithinCap(info.width, info.height, 720)
+            pf?.recycle()
+            dims
+        } catch (e: Exception) {
+            fitWithinCap(info.width, info.height, 720)
+        } finally {
+            runCatching { probeMmr.release() }
+        }
         val fps = info.fps.coerceIn(1, 60)
         val durUs = info.durationMs * 1000
         val frameCount = ((info.durationMs / 1000.0) * fps).toInt().coerceAtLeast(1)
@@ -45,6 +62,7 @@ class VideoFilterRenderer(
         var inputSurface: CodecInputSurface? = null
         var renderer: BitmapRenderer? = null
         var muxer: MediaMuxer? = null
+        var audio: AudioTrack? = null
         val mmr = MediaMetadataRetriever()
 
         try {
@@ -69,7 +87,7 @@ class VideoFilterRenderer(
             muxer = MediaMuxer(outFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
 
             // --- Audio passthrough setup ---
-            val audio = openAudioTrack(uri)
+            audio = openAudioTrack(uri)
             var audioOutIndex = -1
             if (audio != null) audioOutIndex = muxer.addTrack(audio.format)
 
@@ -79,6 +97,7 @@ class VideoFilterRenderer(
 
             // --- Frame loop ---
             for (f in 0 until frameCount) {
+                ensureActive()
                 val tUs = f * frameIntervalUs
                 val raw = mmr.getFrameAtTime(tUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
                     ?: mmr.getFrameAtTime(tUs, MediaMetadataRetriever.OPTION_CLOSEST)
@@ -118,10 +137,11 @@ class VideoFilterRenderer(
             if (audio != null && audioOutIndex >= 0) {
                 if (!muxerStarted) { muxer.start(); muxerStarted = true }
                 copyAudio(audio, muxer, audioOutIndex)
-                audio.extractor.release()
             }
 
             true
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             android.util.Log.e("VideoFilterRenderer", "render failed", e)
             false
@@ -133,6 +153,7 @@ class VideoFilterRenderer(
             runCatching { inputSurface?.release() }
             runCatching { muxer?.stop() }
             runCatching { muxer?.release() }
+            runCatching { audio?.extractor?.release() }
         }
     }
 
