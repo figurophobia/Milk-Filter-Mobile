@@ -88,6 +88,11 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.CreateDocument("image/png")
     ) { uri -> uri?.let { saveBitmapToUri(it) } }
 
+    private var renderedVideoFile: File? = null
+    private val savePickerVideo = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("video/mp4")
+    ) { uri -> uri?.let { copyRenderedVideoTo(it) } }
+
     private val strings = mapOf(
         "en" to mapOf(
             "brightness"     to "BRIGHT",       "contrast"      to "CONTRAST",
@@ -104,7 +109,10 @@ class MainActivity : AppCompatActivity() {
             "saveFailed"     to "Could not save.",
             "loadFailed"     to "Could not open file.",
             "unsupported"    to "Unsupported file type.",
-            "placeholderTapMedia" to "Tap to add\nimage or video"
+            "placeholderTapMedia" to "Tap to add\nimage or video",
+            "rendering"      to "RENDERING… %d%%",
+            "renderFailed"   to "Could not render video.",
+            "appTitle"       to "MILK FILTER\nMOBILE"
         ),
         "es" to mapOf(
             "brightness"     to "BRILLO",       "contrast"      to "CONTRASTE",
@@ -121,7 +129,10 @@ class MainActivity : AppCompatActivity() {
             "saveFailed"     to "No se pudo guardar.",
             "loadFailed"     to "No se pudo abrir el archivo.",
             "unsupported"    to "Tipo de archivo no soportado.",
-            "placeholderTapMedia" to "Toca para añadir\nimagen o vídeo"
+            "placeholderTapMedia" to "Toca para añadir\nimagen o vídeo",
+            "rendering"      to "RENDERIZANDO… %d%%",
+            "renderFailed"   to "No se pudo renderizar el vídeo.",
+            "appTitle"       to "MILK FILTER\nMOBILE"
         )
     )
     private fun t(key: String) = strings[currentLang]?.get(key) ?: strings["en"]?.get(key) ?: key
@@ -181,9 +192,12 @@ class MainActivity : AppCompatActivity() {
         editBtn.setOnClickListener          { enterEditMode() }
         editAgainBtn.setOnClickListener     { enterEditMode() }
         resetBtn.setOnClickListener         { resetCurrentFilter() }
-        doneBtn.setOnClickListener          { applyState(AppState.POST_EDIT) }
-        shareBtn.setOnClickListener         { shareImage() }
-        downloadBtn.setOnClickListener      { openSavePicker() }
+        doneBtn.setOnClickListener {
+            val v = currentVideo
+            if (v != null) renderVideo(v) else applyState(AppState.POST_EDIT)
+        }
+        shareBtn.setOnClickListener         { if (renderedVideoFile != null) shareVideo() else shareImage() }
+        downloadBtn.setOnClickListener      { if (renderedVideoFile != null) savePickerVideo.launch("milk-filter-${System.currentTimeMillis()}.mp4") else openSavePicker() }
     }
 
     private fun applyState(newState: AppState) {
@@ -199,7 +213,16 @@ class MainActivity : AppCompatActivity() {
         if (newState == AppState.EDITING) refreshToolStrip()
     }
 
-    private fun enterEditMode() { activeTool = null; applyState(AppState.EDITING) }
+    private fun enterEditMode() {
+        val v = currentVideo
+        if (v != null && renderedVideoFile != null) {
+            // Coming back from a rendered result: drop it and restart the live preview
+            // (startVideoSession stops resultVideo playback and hides it).
+            renderedVideoFile = null
+            startVideoSession(v.uri, v.info)
+        }
+        activeTool = null; applyState(AppState.EDITING)
+    }
 
     private fun resetCurrentFilter() {
         if (activeFilter == "dither") {
@@ -454,11 +477,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun startVideoSession(uri: Uri, info: VideoInfo) {
         previewController?.stop()
+        if (currentVideo?.uri != uri) renderedVideoFile = null   // fresh video: drop stale render
         currentVideo = MediaJob.Video(uri, info)
         val pc = VideoPreviewController(uri, info, contentResolver)
         pc.updateFilter(activeFilter, ditherState, milkState)
         previewController = pc
         resultImage.visibility = View.VISIBLE
+        resultVideo.stopPlayback()
         resultVideo.visibility = View.GONE
         showProgress(true)
         pc.start { bmp ->
@@ -470,6 +495,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadImageFrom(uri: Uri) {
         previewController?.stop(); previewController = null; currentVideo = null
+        renderedVideoFile = null
+        resultVideo.stopPlayback()
         resultVideo.visibility = View.GONE
         lifecycleScope.launch {
             showProgress(true)
@@ -506,6 +533,53 @@ class MainActivity : AppCompatActivity() {
             showProgress(true)
             val ok = withContext(Dispatchers.IO) {
                 try { contentResolver.openOutputStream(uri)?.use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }; true }
+                catch (e: Exception) { false }
+            }
+            showProgress(false)
+            Snackbar.make(findViewById(R.id.main), if (ok) t("saved") else t("saveFailed"), Snackbar.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun renderVideo(v: MediaJob.Video) {
+        previewController?.stop()
+        showProgress(true)
+        titleText.text = t("rendering").format(0)
+        lifecycleScope.launch {
+            val outFile = File(File(cacheDir, "shared").also { it.mkdirs() }, "mf_render_${System.currentTimeMillis()}.mp4")
+            val ok = VideoFilterRenderer(this@MainActivity, contentResolver).render(
+                v.uri, v.info, activeFilter, ditherState, milkState, outFile
+            ) { pct -> runOnUiThread { titleText.text = t("rendering").format(pct) } }
+            showProgress(false)
+            titleText.text = t("appTitle")
+            if (ok) {
+                renderedVideoFile = outFile
+                resultImage.visibility = View.GONE
+                resultVideo.visibility = View.VISIBLE
+                resultVideo.setVideoPath(outFile.absolutePath)
+                resultVideo.setOnPreparedListener { it.isLooping = true; resultVideo.start() }
+                applyState(AppState.POST_EDIT)
+            } else {
+                Snackbar.make(findViewById(R.id.main), t("renderFailed"), Snackbar.LENGTH_LONG).show()
+                startVideoSession(v.uri, v.info)   // resume the live preview so editing can continue
+            }
+        }
+    }
+
+    private fun shareVideo() {
+        val file = renderedVideoFile ?: return
+        val uri = FileProvider.getUriForFile(this, "${packageName}.fileprovider", file)
+        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+            type = "video/mp4"; putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }, null))
+    }
+
+    private fun copyRenderedVideoTo(dest: Uri) {
+        val file = renderedVideoFile ?: return
+        lifecycleScope.launch {
+            showProgress(true)
+            val ok = withContext(Dispatchers.IO) {
+                try { contentResolver.openOutputStream(dest)?.use { out -> file.inputStream().use { it.copyTo(out) } }; true }
                 catch (e: Exception) { false }
             }
             showProgress(false)
