@@ -89,6 +89,7 @@ class MainActivity : AppCompatActivity() {
     ) { uri -> uri?.let { saveBitmapToUri(it) } }
 
     private var renderedVideoFile: File? = null
+    private var isRendering = false
     private val savePickerVideo = registerForActivityResult(
         ActivityResultContracts.CreateDocument("video/mp4")
     ) { uri -> uri?.let { copyRenderedVideoTo(it) } }
@@ -541,15 +542,24 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderVideo(v: MediaJob.Video) {
+        if (isRendering) return
+        isRendering = true
         previewController?.stop()
-        showProgress(true)
+        // Rendering presentation: hide the edit chrome and use the title as a
+        // large, visible percentage readout (titleText is GONE in EDITING state).
+        editPanel.visibility = View.GONE
+        resetBtn.visibility = View.GONE
+        doneBtn.visibility = View.GONE
+        titleText.visibility = View.VISIBLE
         titleText.text = t("rendering").format(0)
+        showProgress(true)
         lifecycleScope.launch {
             val outFile = File(File(cacheDir, "shared").also { it.mkdirs() }, "mf_render_${System.currentTimeMillis()}.mp4")
             val ok = VideoFilterRenderer(this@MainActivity, contentResolver).render(
                 v.uri, v.info, activeFilter, ditherState, milkState, outFile
             ) { pct -> runOnUiThread { titleText.text = t("rendering").format(pct) } }
             showProgress(false)
+            isRendering = false
             titleText.text = t("appTitle")
             if (ok) {
                 renderedVideoFile = outFile
@@ -560,7 +570,8 @@ class MainActivity : AppCompatActivity() {
                 applyState(AppState.POST_EDIT)
             } else {
                 Snackbar.make(findViewById(R.id.main), t("renderFailed"), Snackbar.LENGTH_LONG).show()
-                startVideoSession(v.uri, v.info)   // resume the live preview so editing can continue
+                applyState(AppState.EDITING)        // restore the edit UI (reset/done/panel)
+                startVideoSession(v.uri, v.info)    // resume the live preview so editing can continue
             }
         }
     }
