@@ -62,6 +62,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var downloadBtn:      Button
     private lateinit var editAgainBtn:     Button
     private lateinit var progressBar:      ProgressBar
+    private lateinit var resultVideo:      VideoView
+
+    private var previewController: VideoPreviewController? = null
+    private var currentVideo: MediaJob.Video? = null
 
     private val pickMedia = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let { onMediaPicked(it) }
@@ -155,6 +159,7 @@ class MainActivity : AppCompatActivity() {
         downloadBtn      = findViewById(R.id.downloadBtn)
         editAgainBtn     = findViewById(R.id.editAgainBtn)
         progressBar      = findViewById(R.id.progressBar)
+        resultVideo      = findViewById(R.id.resultVideo)
 
         findViewById<TextView>(R.id.placeholderText).text = t("placeholderTapMedia")
         resetBtn.text     = t("reset")
@@ -443,10 +448,24 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startVideoSession(uri: Uri, info: VideoInfo) {
-        // Implemented in Task 8.
+        previewController?.stop()
+        currentVideo = MediaJob.Video(uri, info)
+        val pc = VideoPreviewController(uri, info, contentResolver)
+        pc.updateFilter(activeFilter, ditherState, milkState)
+        previewController = pc
+        resultImage.visibility = View.VISIBLE
+        resultVideo.visibility = View.GONE
+        showProgress(true)
+        pc.start { bmp ->
+            showProgress(false)
+            resultImage.setImageBitmap(bmp)
+            if (appState == AppState.EMPTY) applyState(AppState.PREVIEW)
+        }
     }
 
     private fun loadImageFrom(uri: Uri) {
+        previewController?.stop(); previewController = null; currentVideo = null
+        resultVideo.visibility = View.GONE
         lifecycleScope.launch {
             showProgress(true)
             val bmp = withContext(Dispatchers.IO) { decodeSampled(uri, 1500) }
@@ -467,6 +486,8 @@ class MainActivity : AppCompatActivity() {
     } catch (e: Exception) { null }
 
     private fun triggerProcess() {
+        val pc = previewController
+        if (pc != null) { pc.updateFilter(activeFilter, ditherState, milkState); return }
         vm.reprocessImage()
     }
 
