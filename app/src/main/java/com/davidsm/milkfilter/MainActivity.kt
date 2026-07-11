@@ -398,41 +398,48 @@ class MainActivity : AppCompatActivity() {
         controlZone.addView(view)
     }
 
-    private fun probeVideo(uri: Uri): VideoInfo? = try {
+    private fun probeVideo(uri: Uri): VideoInfo? {
         val mmr = MediaMetadataRetriever()
-        mmr.setDataSource(this, uri)
-        val w = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
-        val h = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
-        val durMs = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-        val rot = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
-        mmr.release()
-
-        // fps + audio presence via MediaExtractor
-        var fps = 30
-        var hasAudio = false
         val ex = MediaExtractor()
-        ex.setDataSource(this, uri, null)
-        for (i in 0 until ex.trackCount) {
-            val fmt = ex.getTrackFormat(i)
-            val mime = fmt.getString(MediaFormat.KEY_MIME) ?: ""
-            if (mime.startsWith("video/") && fmt.containsKey(MediaFormat.KEY_FRAME_RATE)) {
-                fps = fmt.getInteger(MediaFormat.KEY_FRAME_RATE).coerceIn(1, 60)
-            }
-            if (mime.startsWith("audio/")) hasAudio = true
-        }
-        ex.release()
+        return try {
+            mmr.setDataSource(this, uri)
+            val w = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+            val h = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+            val durMs = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+            val rot = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
 
-        if (w <= 0 || h <= 0) null else VideoInfo(w, h, durMs, rot, fps, hasAudio)
-    } catch (e: Exception) { null }
+            var fps = 30
+            var hasAudio = false
+            ex.setDataSource(this, uri, null)
+            for (i in 0 until ex.trackCount) {
+                val fmt = ex.getTrackFormat(i)
+                val mime = fmt.getString(MediaFormat.KEY_MIME) ?: ""
+                if (mime.startsWith("video/") && fmt.containsKey(MediaFormat.KEY_FRAME_RATE)) {
+                    fps = fmt.getInteger(MediaFormat.KEY_FRAME_RATE).coerceIn(1, 60)
+                }
+                if (mime.startsWith("audio/")) hasAudio = true
+            }
+
+            if (w <= 0 || h <= 0) null else VideoInfo(w, h, durMs, rot, fps, hasAudio)
+        } catch (e: Exception) {
+            null
+        } finally {
+            runCatching { mmr.release() }
+            runCatching { ex.release() }
+        }
+    }
 
     private fun loadVideoFrom(uri: Uri) {
-        val info = probeVideo(uri)
-        if (info == null) {
-            Snackbar.make(findViewById(R.id.main), t("loadFailed"), Snackbar.LENGTH_SHORT).show()
-            return
+        lifecycleScope.launch {
+            showProgress(true)
+            val info = withContext(Dispatchers.IO) { probeVideo(uri) }
+            showProgress(false)
+            if (info == null) {
+                Snackbar.make(findViewById(R.id.main), t("loadFailed"), Snackbar.LENGTH_SHORT).show()
+                return@launch
+            }
+            startVideoSession(uri, info)
         }
-        // Wired to the preview controller + states in Task 8.
-        startVideoSession(uri, info)
     }
 
     private fun startVideoSession(uri: Uri, info: VideoInfo) {
