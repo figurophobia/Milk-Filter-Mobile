@@ -99,8 +99,10 @@ class VideoFilterRenderer(
             for (f in 0 until frameCount) {
                 ensureActive()
                 val tUs = f * frameIntervalUs
-                val raw = mmr.getFrameAtTime(tUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                    ?: mmr.getFrameAtTime(tUs, MediaMetadataRetriever.OPTION_CLOSEST)
+                // OPTION_CLOSEST returns the actual frame at tUs. OPTION_CLOSEST_SYNC would
+                // snap to the nearest keyframe, so clips with a single leading keyframe would
+                // render N copies of the first frame (video "frozen" on frame 0).
+                val raw = mmr.getFrameAtTime(tUs, MediaMetadataRetriever.OPTION_CLOSEST)
                     ?: continue
                 val scaled = if (raw.width != outW || raw.height != outH)
                     Bitmap.createScaledBitmap(raw, outW, outH, true) else raw

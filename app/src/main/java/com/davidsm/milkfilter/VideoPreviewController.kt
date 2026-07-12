@@ -13,64 +13,86 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.max
+import kotlin.math.min
 
-/** Live, low-res, low-fps filtered preview of a video (jank accepted). */
+/**
+ * Live filtered preview of a video.
+ *
+ * getFrameAtTime does a full seek+decode per call, so decoding every displayed frame live is far
+ * too slow (janky). Instead we sample a bounded set of low-res RAW frames spread across the clip,
+ * decoding each ONCE (lazily) and caching it. The playback loop just re-applies the current filter
+ * to the cached raw frames, so after the first pass playback is smooth, and moving a slider
+ * re-filters the cached frames instantly.
+ */
 class VideoPreviewController(
     private val uri: Uri,
     private val info: VideoInfo,
     private val resolver: ContentResolver,
-    private val previewMaxDim: Int = 360,
-    private val previewFps: Int = 12
+    private val previewMaxDim: Int = 288,
+    private val previewFps: Int = 15,
+    private val maxFrames: Int = 72
 ) {
-    private var filter = "dither"
-    private var dither = FilterProcessor.DitherState()
-    private var milk = FilterProcessor.MilkState()
+    @Volatile private var filter = "dither"
+    @Volatile private var dither = FilterProcessor.DitherState()
+    @Volatile private var milk = FilterProcessor.MilkState()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var loop: Job? = null
 
+    /** Copies the filter state so slider mutations can't tear a frame mid-render. */
     fun updateFilter(filter: String, dither: FilterProcessor.DitherState, milk: FilterProcessor.MilkState) {
-        this.filter = filter; this.dither = dither; this.milk = milk
+        this.filter = filter
+        this.dither = dither.copy()
+        this.milk = milk.copy()
     }
 
     fun start(onFrame: (Bitmap) -> Unit, onError: () -> Unit = {}) {
         loop?.cancel()
         loop = scope.launch {
             val mmr = MediaMetadataRetriever()
+            val durUs = info.durationMs * 1000
+            // How many distinct frames to sample across the whole clip, and their timestamps.
+            val n = if (durUs <= 0L) 1
+                    else min(maxFrames, max(1, (info.durationMs * previewFps / 1000L).toInt()))
+            val stepUs = if (n > 1) durUs / (n - 1) else 0L
+            val cache = arrayOfNulls<Bitmap>(n)   // raw, low-res frames, reused across playback loops
+            val frameDelayMs = 1000L / previewFps.coerceAtLeast(1)
             try {
                 withContext(Dispatchers.IO) { mmr.setDataSource2(resolver, uri) }
-                val durUs = info.durationMs * 1000
-                val frameIntervalUs = 1_000_000L / previewFps.coerceAtLeast(1)
-                var frameIndex = 0
-                try {
-                    while (isActive) {
-                        var tUs = 0L
-                        while (isActive && tUs < maxOf(durUs, frameIntervalUs)) {
-                            val raw = withContext(Dispatchers.IO) {
-                                mmr.getFrameAtTime(tUs, MediaMetadataRetriever.OPTION_CLOSEST)
-                            }
-                            if (raw != null) {
-                                val scaled = scaleForPreview(raw)
-                                if (scaled !== raw) raw.recycle()
-                                val filtered = if (filter == "dither")
-                                    FilterProcessor.processDither(scaled, dither)
-                                else FilterProcessor.processMilk(scaled, milk, frameIndex)
-                                if (filtered !== scaled) scaled.recycle()
-                                withContext(Dispatchers.Main) { onFrame(filtered) }
-                                frameIndex++
-                            }
-                            tUs += frameIntervalUs
-                            delay(1000L / previewFps)
+                var idx = 0
+                while (isActive) {
+                    val startedAt = System.currentTimeMillis()
+                    var raw = cache[idx]
+                    if (raw == null || raw.isRecycled) {
+                        val decoded = withContext(Dispatchers.IO) {
+                            mmr.getFrameAtTime(idx * stepUs, MediaMetadataRetriever.OPTION_CLOSEST)
+                        }
+                        if (decoded != null) {
+                            raw = scaleForPreview(decoded)
+                            if (raw !== decoded) decoded.recycle()
+                            cache[idx] = raw
                         }
                     }
-                } finally {
-                    withContext(NonCancellable + Dispatchers.IO) { runCatching { mmr.release() } }
+                    val current = raw
+                    if (current != null && !current.isRecycled) {
+                        val filtered = if (filter == "dither")
+                            FilterProcessor.processDither(current, dither)
+                        else FilterProcessor.processMilk(current, milk, idx)
+                        withContext(Dispatchers.Main) { onFrame(filtered) }
+                    }
+                    idx = (idx + 1) % n
+                    val wait = frameDelayMs - (System.currentTimeMillis() - startedAt)
+                    if (wait > 0) delay(wait)
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
                 android.util.Log.e("VideoPreviewController", "preview failed", e)
-                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) { onError() }
+                withContext(NonCancellable + Dispatchers.Main) { onError() }
+            } finally {
+                withContext(NonCancellable + Dispatchers.IO) { runCatching { mmr.release() } }
+                for (b in cache) runCatching { b?.recycle() }
             }
         }
     }
