@@ -62,7 +62,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var downloadBtn:      Button
     private lateinit var editAgainBtn:     Button
     private lateinit var progressBar:      ProgressBar
-    private lateinit var resultVideo:      VideoView
+    private lateinit var resultVideo:      AspectRatioVideoView
 
     private var previewController: VideoPreviewController? = null
     private var currentVideo: MediaJob.Video? = null
@@ -571,7 +571,11 @@ class MainActivity : AppCompatActivity() {
                 resultImage.visibility = View.GONE
                 resultVideo.visibility = View.VISIBLE
                 resultVideo.setVideoPath(outFile.absolutePath)
-                resultVideo.setOnPreparedListener { it.isLooping = true; resultVideo.start() }
+                resultVideo.setOnPreparedListener { mp ->
+                    resultVideo.setVideoAspect(mp.videoWidth, mp.videoHeight)
+                    mp.isLooping = true
+                    resultVideo.start()
+                }
                 applyState(AppState.POST_EDIT)
             } else {
                 Snackbar.make(findViewById(R.id.main), t("renderFailed"), Snackbar.LENGTH_LONG).show()
