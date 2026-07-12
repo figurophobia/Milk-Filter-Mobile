@@ -411,22 +411,25 @@ class VideoPreviewGLView @JvmOverloads constructor(context: Context, attrs: Attr
             uniform vec3 uC0;
             uniform vec3 uC1;
             uniform vec3 uC2;
-            float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+            // Stable per-pixel hash (no sin(): sin banding gets ugly at large coords).
+            float hash(vec2 p) {
+                vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+                p3 += dot(p3, p3.yzx + 33.33);
+                return fract((p3.x + p3.y) * p3.z);
+            }
             void main() {
                 vec2 suv = vTex;
-                vec2 cell;
                 if (uComp > 0.0) {
                     vec2 blocks = max(vec2(1.0), floor(uVideoRes * uComp));
-                    cell = floor(vTex * blocks);
+                    vec2 cell = floor(vTex * blocks);
                     suv = (cell + 0.5) / blocks;
-                } else {
-                    cell = floor(vTex * uVideoRes);
                 }
                 vec3 col = texture2D(uTex, suv).rgb * 255.0;
                 float lum = (col.r + col.g + col.b) / 3.0;
                 lum = ((lum / 255.0 - 0.5) * uMCon + 0.5) * 255.0;
                 lum = pow(clamp(lum / 255.0, 0.0, 1.0), uMBri) * 255.0;
-                float noise = hash(cell);
+                // Noise is always per source pixel (fine grain), independent of the color grid.
+                float noise = hash(floor(vTex * uVideoRes));
                 vec3 c;
                 if (lum <= 25.0) c = uC0;
                 else if (lum <= 70.0) c = (noise < uPunt) ? uC0 : uC1;
