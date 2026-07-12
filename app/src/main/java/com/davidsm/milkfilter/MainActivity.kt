@@ -226,9 +226,12 @@ class MainActivity : AppCompatActivity() {
         downloadBtn.text  = t("btnDownload")
 
         emptyPlaceholder.setOnClickListener { openPicker() }
-        resultImage.setOnClickListener {
-            if (appState == AppState.EMPTY || appState == AppState.PREVIEW) openPicker()
-        }
+        // Tapping the central media area picks new media in every state except while editing
+        // (image, live video preview, and the rendered video result all behave the same).
+        val pickOnTap = View.OnClickListener { if (appState != AppState.EDITING) openPicker() }
+        resultImage.setOnClickListener(pickOnTap)
+        resultVideo.setOnClickListener(pickOnTap)
+        previewGl.setOnClickListener(pickOnTap)
         editBtn.setOnClickListener          { enterEditMode() }
         editAgainBtn.setOnClickListener     { enterEditMode() }
         resetBtn.setOnClickListener         { resetCurrentFilter() }
