@@ -33,6 +33,7 @@
         <li><a href="#built-with">Built With</a></li>
       </ul>
     </li>
+    <li><a href="#download">Download</a></li>
     <li>
       <a href="#getting-started">Getting Started</a>
       <ul>
@@ -100,6 +101,25 @@ Key highlights:
 
 ---
 
+## Download
+
+Grab the ready-to-install Android APK — no build tools required:
+
+<div align="center">
+  <a href="https://github.com/figurophobia/Milk-Filter-Mobile/releases/download/v1.0.0/milk-filter-mobile-v1.0.0.apk">
+    <img src="https://img.shields.io/badge/Download-APK%20v1.0.0-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Download APK"/>
+  </a>
+</div>
+
+* **Direct download:** [milk-filter-mobile-v1.0.0.apk](https://github.com/figurophobia/Milk-Filter-Mobile/releases/download/v1.0.0/milk-filter-mobile-v1.0.0.apk)
+* **All versions:** [Releases page](https://github.com/figurophobia/Milk-Filter-Mobile/releases)
+
+> Requires Android 7.0 (API 24) or newer. On first install your device may ask you to allow *"Install from unknown sources"* for the browser or file manager you use to open the APK.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
 ## Getting Started
 
 ### Prerequisites
@@ -139,6 +159,8 @@ Pick photo  →  EDIT  →  adjust controls  →  DONE  →  SHARE / DOWNLOAD
 3. Scroll the bottom toolbar to switch controls
 4. Tap **DONE** to confirm, or **RESET** to undo the current filter pass
 5. **SHARE** sends the result to any app · **DOWNLOAD** saves it to your gallery
+
+> 🖼️ **To change the photo, just tap the middle of the image.** At any point — while previewing, and even on the final SHARE / DOWNLOAD screen — tapping the center of the preview reopens the picker so you can swap in a different photo (or video) without going back or restarting.
 
 <div align="center">
   <table>
