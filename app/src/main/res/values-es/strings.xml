@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="render_channel_name">Renderizado de vídeo</string>
+    <string name="render_notif_title">Renderizando vídeo</string>
+    <string name="render_notif_progress">%1$d%%</string>
+    <string name="render_cancel">Cancelar</string>
+    <string name="render_done_title">Vídeo listo</string>
+    <string name="render_failed_title">Fallo al renderizar</string>
+</resources>

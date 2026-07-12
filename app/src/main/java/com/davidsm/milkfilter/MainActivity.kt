@@ -7,17 +7,22 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.view.animation.DecelerateInterpolator
 import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.snackbar.Snackbar
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -90,9 +95,17 @@ class MainActivity : AppCompatActivity() {
 
     private var renderedVideoFile: File? = null
     private var isRendering = false
+    private var pendingRenderOut: File? = null
+    private var pendingRenderStart: (() -> Unit)? = null
     private val savePickerVideo = registerForActivityResult(
         ActivityResultContracts.CreateDocument("video/mp4")
     ) { uri -> uri?.let { copyRenderedVideoTo(it) } }
+    private val notifPermLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ ->
+        // A denied notification permission doesn't block the foreground render; proceed either way.
+        pendingRenderStart?.invoke(); pendingRenderStart = null
+    }
 
     private val strings = mapOf(
         "en" to mapOf(
@@ -153,6 +166,20 @@ class MainActivity : AppCompatActivity() {
             }
         }
         vm.processing.observe(this) { showProgress(it) }
+
+        // Observe background render progress (from RenderService). Survives rotation/backgrounding.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                RenderBus.state.collect { st ->
+                    when (st) {
+                        is RenderBus.State.Running -> { isRendering = true; enterRenderingUi(st.progress) }
+                        is RenderBus.State.Done -> { RenderBus.state.value = RenderBus.State.Idle; onRenderDone(st.path) }
+                        is RenderBus.State.Failed -> { RenderBus.state.value = RenderBus.State.Idle; onRenderFailed() }
+                        RenderBus.State.Idle -> {}
+                    }
+                }
+            }
+        }
     }
 
     override fun onDestroy() {
@@ -550,38 +577,65 @@ class MainActivity : AppCompatActivity() {
         if (isRendering) return
         isRendering = true
         previewController?.stop()
-        // Rendering presentation: hide the edit chrome and use the title as a
-        // large, visible percentage readout (titleText is GONE in EDITING state).
+        currentVideo = v
+        pendingRenderOut = File(File(cacheDir, "shared").also { it.mkdirs() }, "mf_render_${System.currentTimeMillis()}.mp4")
+        enterRenderingUi(0)
+        ensureNotificationPermission {
+            val out = pendingRenderOut ?: return@ensureNotificationPermission
+            val intent = RenderService.intentFor(
+                this, v.uri, v.info, activeFilter, ditherState, milkState, out.absolutePath
+            )
+            ContextCompat.startForegroundService(this, intent)
+        }
+    }
+
+    /** Rendering runs in EDITING; titleText is GONE there, so surface the % via the title. */
+    private fun enterRenderingUi(pct: Int) {
         editPanel.visibility = View.GONE
         resetBtn.visibility = View.GONE
         doneBtn.visibility = View.GONE
         titleText.visibility = View.VISIBLE
-        titleText.text = t("rendering").format(0)
+        titleText.text = t("rendering").format(pct)
         showProgress(true)
-        lifecycleScope.launch {
-            val outFile = File(File(cacheDir, "shared").also { it.mkdirs() }, "mf_render_${System.currentTimeMillis()}.mp4")
-            val ok = VideoFilterRenderer(this@MainActivity, contentResolver).render(
-                v.uri, v.info, activeFilter, ditherState, milkState, outFile
-            ) { pct -> runOnUiThread { titleText.text = t("rendering").format(pct) } }
-            showProgress(false)
-            isRendering = false
-            titleText.text = t("appTitle")
-            if (ok) {
-                renderedVideoFile = outFile
-                resultImage.visibility = View.GONE
-                resultVideo.visibility = View.VISIBLE
-                resultVideo.setVideoPath(outFile.absolutePath)
-                resultVideo.setOnPreparedListener { mp ->
-                    resultVideo.setVideoAspect(mp.videoWidth, mp.videoHeight)
-                    mp.isLooping = true
-                    resultVideo.start()
-                }
-                applyState(AppState.POST_EDIT)
-            } else {
-                Snackbar.make(findViewById(R.id.main), t("renderFailed"), Snackbar.LENGTH_LONG).show()
-                applyState(AppState.EDITING)        // restore the edit UI (reset/done/panel)
-                startVideoSession(v.uri, v.info)    // resume the live preview so editing can continue
-            }
+    }
+
+    private fun onRenderDone(path: String) {
+        isRendering = false
+        showProgress(false)
+        titleText.text = t("appTitle")
+        val file = File(path)
+        if (!file.exists()) { onRenderFailed(); return }
+        renderedVideoFile = file
+        resultImage.visibility = View.GONE
+        resultVideo.visibility = View.VISIBLE
+        resultVideo.setVideoPath(file.absolutePath)
+        resultVideo.setOnPreparedListener { mp ->
+            resultVideo.setVideoAspect(mp.videoWidth, mp.videoHeight)
+            mp.isLooping = true
+            resultVideo.start()
+        }
+        applyState(AppState.POST_EDIT)
+    }
+
+    private fun onRenderFailed() {
+        isRendering = false
+        showProgress(false)
+        titleText.text = t("appTitle")
+        Snackbar.make(findViewById(R.id.main), t("renderFailed"), Snackbar.LENGTH_LONG).show()
+        val v = currentVideo
+        applyState(AppState.EDITING)
+        if (v != null) startVideoSession(v.uri, v.info)
+    }
+
+    private fun ensureNotificationPermission(then: () -> Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingRenderStart = then
+            notifPermLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            then()
         }
     }
 

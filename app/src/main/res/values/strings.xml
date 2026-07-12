@@ -2,4 +2,10 @@
 <resources>
     <string name="app_name">Milk Filter Mobile</string>
     <string name="image_desc">Filtered result</string>
+    <string name="render_channel_name">Video rendering</string>
+    <string name="render_notif_title">Rendering video</string>
+    <string name="render_notif_progress">%1$d%%</string>
+    <string name="render_cancel">Cancel</string>
+    <string name="render_done_title">Video ready</string>
+    <string name="render_failed_title">Render failed</string>
 </resources>
