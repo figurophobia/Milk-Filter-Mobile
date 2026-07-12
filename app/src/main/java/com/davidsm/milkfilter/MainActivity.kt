@@ -68,8 +68,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var editAgainBtn:     Button
     private lateinit var progressBar:      ProgressBar
     private lateinit var resultVideo:      AspectRatioVideoView
+    private lateinit var previewGl:        VideoPreviewGLView
 
-    private var previewController: VideoPreviewController? = null
     private var currentVideo: MediaJob.Video? = null
 
     private val pickMedia = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -182,8 +182,18 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (currentVideo != null) previewGl.onResumePreview()
+    }
+
+    override fun onPause() {
+        if (currentVideo != null) previewGl.onPausePreview()
+        super.onPause()
+    }
+
     override fun onDestroy() {
-        previewController?.stop()
+        previewGl.releasePreview()
         resultVideo.stopPlayback()
         super.onDestroy()
     }
@@ -205,6 +215,7 @@ class MainActivity : AppCompatActivity() {
         editAgainBtn     = findViewById(R.id.editAgainBtn)
         progressBar      = findViewById(R.id.progressBar)
         resultVideo      = findViewById(R.id.resultVideo)
+        previewGl        = findViewById(R.id.previewGl)
 
         findViewById<TextView>(R.id.placeholderText).text = t("placeholderTapMedia")
         resetBtn.text     = t("reset")
@@ -506,29 +517,33 @@ class MainActivity : AppCompatActivity() {
 
     private fun startVideoSession(uri: Uri, info: VideoInfo) {
         vm.releaseImageSession()
-        previewController?.stop()
         if (currentVideo?.uri != uri) renderedVideoFile = null   // fresh video: drop stale render
         currentVideo = MediaJob.Video(uri, info)
-        val pc = VideoPreviewController(uri, info, contentResolver)
-        pc.updateFilter(activeFilter, ditherState, milkState)
-        previewController = pc
-        resultImage.visibility = View.VISIBLE
+        resultImage.setImageBitmap(null)
+        resultImage.visibility = View.GONE
         resultVideo.stopPlayback()
         resultVideo.visibility = View.GONE
-        showProgress(true)
-        pc.start(onFrame = { bmp ->
+        previewGl.visibility = View.VISIBLE
+        previewGl.onResumePreview()
+        previewGl.onReady = {
             showProgress(false)
-            resultImage.setImageBitmap(bmp)
             if (appState == AppState.EMPTY) applyState(AppState.PREVIEW)
-        }, onError = {
+        }
+        previewGl.onError = {
             showProgress(false)
             Snackbar.make(findViewById(R.id.main), t("loadFailed"), Snackbar.LENGTH_SHORT).show()
-        })
+        }
+        showProgress(true)
+        previewGl.setVideo(uri, info)
+        previewGl.updateFilter(activeFilter, ditherState, milkState)
     }
 
     private fun loadImageFrom(uri: Uri) {
-        previewController?.stop(); previewController = null; currentVideo = null
+        previewGl.releasePreview()
+        previewGl.visibility = View.GONE
+        currentVideo = null
         renderedVideoFile = null
+        resultImage.visibility = View.VISIBLE
         resultVideo.stopPlayback()
         resultVideo.visibility = View.GONE
         lifecycleScope.launch {
@@ -551,8 +566,7 @@ class MainActivity : AppCompatActivity() {
     } catch (e: Exception) { null }
 
     private fun triggerProcess() {
-        val pc = previewController
-        if (pc != null) { pc.updateFilter(activeFilter, ditherState, milkState); return }
+        if (currentVideo != null) { previewGl.updateFilter(activeFilter, ditherState, milkState); return }
         vm.reprocessImage()
     }
 
@@ -576,7 +590,7 @@ class MainActivity : AppCompatActivity() {
     private fun renderVideo(v: MediaJob.Video) {
         if (isRendering) return
         isRendering = true
-        previewController?.stop()
+        previewGl.onPausePreview()
         currentVideo = v
         pendingRenderOut = File(File(cacheDir, "shared").also { it.mkdirs() }, "mf_render_${System.currentTimeMillis()}.mp4")
         enterRenderingUi(0)
@@ -606,6 +620,8 @@ class MainActivity : AppCompatActivity() {
         val file = File(path)
         if (!file.exists()) { onRenderFailed(); return }
         renderedVideoFile = file
+        previewGl.onPausePreview()
+        previewGl.visibility = View.GONE
         resultImage.visibility = View.GONE
         resultVideo.visibility = View.VISIBLE
         resultVideo.setVideoPath(file.absolutePath)
