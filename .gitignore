@@ -1,8 +1,13 @@
 # Built artifacts
 *.apk
+*.apk.idsig
+*.idsig
 *.aab
 *.ap_
 *.dex
+
+# Internal process/planning docs (not part of the source)
+docs/superpowers/
 
 # Build dirs
 build/
