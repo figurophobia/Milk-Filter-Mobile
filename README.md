@@ -4,6 +4,7 @@
 [![Forks][forks-shield]][forks-url]
 [![Stargazers][stars-shield]][stars-url]
 [![Issues][issues-shield]][issues-url]
+[![Downloads][downloads-shield]][downloads-url]
 [![MIT License][license-shield]][license-url]
 
 <br />
@@ -316,6 +317,8 @@ Distributed under the MIT License. See [`LICENSE`](LICENSE) for details.
 [stars-url]: https://github.com/figurophobia/milk-filter-mobile/stargazers
 [issues-shield]: https://img.shields.io/github/issues/figurophobia/milk-filter-mobile.svg?style=for-the-badge
 [issues-url]: https://github.com/figurophobia/milk-filter-mobile/issues
+[downloads-shield]: https://img.shields.io/github/downloads/figurophobia/milk-filter-mobile/total.svg?style=for-the-badge
+[downloads-url]: https://github.com/figurophobia/milk-filter-mobile/releases
 [license-shield]: https://img.shields.io/github/license/figurophobia/milk-filter-mobile.svg?style=for-the-badge
 [license-url]: https://github.com/figurophobia/milk-filter-mobile/blob/main/LICENSE
 [Kotlin-shield]: https://img.shields.io/badge/Kotlin-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white
