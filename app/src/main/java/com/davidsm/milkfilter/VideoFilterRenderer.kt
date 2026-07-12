@@ -2,16 +2,16 @@ package com.davidsm.milkfilter
 
 import android.content.ContentResolver
 import android.content.Context
-import android.graphics.Bitmap
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaExtractor
 import android.media.MediaFormat
-import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
 import android.net.Uri
-import com.davidsm.milkfilter.gl.BitmapRenderer
+import android.opengl.Matrix
 import com.davidsm.milkfilter.gl.CodecInputSurface
+import com.davidsm.milkfilter.gl.DecoderOutputSurface
+import com.davidsm.milkfilter.gl.VideoFilterProgram
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -23,8 +23,11 @@ class VideoFilterRenderer(
     private val resolver: ContentResolver
 ) {
     /**
-     * Decode (MediaMetadataRetriever) -> filter (FilterProcessor) -> encode (H.264
-     * via GL input surface) -> mux (MP4) with the original audio copied through.
+     * Fully GPU pipeline: decode (MediaCodec) -> SurfaceTexture -> filter shader ([VideoFilterProgram],
+     * the SAME shader as the live preview) -> encode (H.264 via GL input surface) -> mux (MP4) with
+     * the original audio copied through. No per-frame seeks and no CPU per-pixel work, so it runs
+     * close to real time and the export looks exactly like the preview.
+     *
      * Returns true on success. onProgress reports 0..100.
      */
     suspend fun render(
@@ -36,39 +39,44 @@ class VideoFilterRenderer(
         outFile: File,
         onProgress: (Int) -> Unit
     ): Boolean = withContext(Dispatchers.Default) {
-        // Derive output dimensions from a real decoded frame: getFrameAtTime returns
-        // rotation-corrected bitmaps, so using info.width/height (coded, pre-rotation)
-        // would squash portrait video into a landscape canvas.
-        val probeMmr = MediaMetadataRetriever()
-        val (outW, outH) = try {
-            resolver.openFileDescriptor(uri, "r")!!.use { pfd -> probeMmr.setDataSource(pfd.fileDescriptor) }
-            val pf = probeMmr.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                ?: probeMmr.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST)
-            val dims = if (pf != null) fitWithinCap(pf.width, pf.height, 720)
-                       else fitWithinCap(info.width, info.height, 720)
-            pf?.recycle()
-            dims
-        } catch (e: Exception) {
-            fitWithinCap(info.width, info.height, 720)
-        } finally {
-            runCatching { probeMmr.release() }
-        }
-        val fps = info.fps.coerceIn(1, 60)
+        // MediaCodec decodes frames in their coded orientation (rotation metadata is NOT applied),
+        // so we rotate in the shader and size the output to the upright dimensions.
+        val swap = info.rotationDeg == 90 || info.rotationDeg == 270
+        val uprightW = if (swap) info.height else info.width
+        val uprightH = if (swap) info.width else info.height
+        val capped = fitWithinCap(uprightW, uprightH, 720)
+        val outW = (capped.first / 2) * 2      // H.264 needs even dimensions
+        val outH = (capped.second / 2) * 2
         val durUs = info.durationMs * 1000
-        val frameCount = ((info.durationMs / 1000.0) * fps).toInt().coerceAtLeast(1)
-        val frameIntervalUs = 1_000_000L / fps
+        val fps = info.fps.coerceIn(1, 60)
 
         var encoder: MediaCodec? = null
         var inputSurface: CodecInputSurface? = null
-        var renderer: BitmapRenderer? = null
+        var program: VideoFilterProgram? = null
+        var decoder: MediaCodec? = null
+        var decoderOutput: DecoderOutputSurface? = null
+        var extractor: MediaExtractor? = null
         var muxer: MediaMuxer? = null
         var audio: AudioTrack? = null
-        val mmr = MediaMetadataRetriever()
 
         try {
-            resolver.openFileDescriptor(uri, "r")!!.use { pfd -> mmr.setDataSource(pfd.fileDescriptor) }
+            // --- Video extractor / decoder source track ---
+            val ex = MediaExtractor()
+            extractor = ex
+            resolver.openFileDescriptor(uri, "r")!!.use { pfd -> ex.setDataSource(pfd.fileDescriptor) }
+            var videoTrackIdx = -1
+            var inFormat: MediaFormat? = null
+            for (i in 0 until ex.trackCount) {
+                val fmt = ex.getTrackFormat(i)
+                if ((fmt.getString(MediaFormat.KEY_MIME) ?: "").startsWith("video/")) {
+                    videoTrackIdx = i; inFormat = fmt; break
+                }
+            }
+            if (videoTrackIdx < 0 || inFormat == null) return@withContext false
+            ex.selectTrack(videoTrackIdx)
+            val inMime = inFormat.getString(MediaFormat.KEY_MIME)!!
 
-            // --- Encoder setup (H.264) ---
+            // --- Encoder (H.264) + its GL context ---
             val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, outW, outH).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
                 setInteger(MediaFormat.KEY_BIT_RATE, estimateBitrate(outW, outH, fps))
@@ -82,58 +90,94 @@ class VideoFilterRenderer(
             encoder.start()
 
             inputSurface.makeCurrent()
-            renderer = BitmapRenderer().also { it.surfaceCreated() }
+            val prog = VideoFilterProgram().also { it.init() }
+            program = prog
+            prog.setParams(filter, dither, milk, uprightW, uprightH)
+
+            // --- Decoder renders into an OES texture on the encoder's GL context ---
+            val decOut = DecoderOutputSurface()
+            decoderOutput = decOut
+            decoder = MediaCodec.createDecoderByType(inMime)
+            decoder.configure(inFormat, decOut.surface, null, 0)
+            decoder.start()
+
+            // Rotate sampled tex coords so coded frames come out upright.
+            val rot = FloatArray(16)
+            Matrix.setIdentityM(rot, 0)
+            if (info.rotationDeg != 0) {
+                Matrix.translateM(rot, 0, 0.5f, 0.5f, 0f)
+                Matrix.rotateM(rot, 0, info.rotationDeg.toFloat(), 0f, 0f, 1f)
+                Matrix.translateM(rot, 0, -0.5f, -0.5f, 0f)
+            }
+            val stMatrix = FloatArray(16)
+            val combined = FloatArray(16)
 
             muxer = MediaMuxer(outFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
 
-            // --- Audio passthrough setup ---
+            // --- Audio passthrough ---
             audio = openAudioTrack(uri)
             var audioOutIndex = -1
             if (audio != null) audioOutIndex = muxer.addTrack(audio.format)
 
-            val bufferInfo = MediaCodec.BufferInfo()
+            val encBufferInfo = MediaCodec.BufferInfo()
+            val decBufferInfo = MediaCodec.BufferInfo()
             var videoOutIndex = -1
             var muxerStarted = false
+            val timeoutUs = 10_000L
 
-            // --- Frame loop ---
-            for (f in 0 until frameCount) {
+            var inputDone = false
+            var outputDone = false
+            while (!outputDone) {
                 ensureActive()
-                val tUs = f * frameIntervalUs
-                // OPTION_CLOSEST returns the actual frame at tUs. OPTION_CLOSEST_SYNC would
-                // snap to the nearest keyframe, so clips with a single leading keyframe would
-                // render N copies of the first frame (video "frozen" on frame 0).
-                val raw = mmr.getFrameAtTime(tUs, MediaMetadataRetriever.OPTION_CLOSEST)
-                    ?: continue
-                val scaled = if (raw.width != outW || raw.height != outH)
-                    Bitmap.createScaledBitmap(raw, outW, outH, true) else raw
-                if (scaled !== raw) raw.recycle()
 
-                val filtered = if (filter == "dither")
-                    FilterProcessor.processDither(scaled, dither)
-                else FilterProcessor.processMilk(scaled, milk, f)
-                if (filtered !== scaled) scaled.recycle()
+                // Feed the decoder.
+                if (!inputDone) {
+                    val inIdx = decoder.dequeueInputBuffer(timeoutUs)
+                    if (inIdx >= 0) {
+                        val ib = decoder.getInputBuffer(inIdx)!!
+                        val sz = ex.readSampleData(ib, 0)
+                        if (sz < 0) {
+                            decoder.queueInputBuffer(inIdx, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                            inputDone = true
+                        } else {
+                            decoder.queueInputBuffer(inIdx, 0, sz, ex.sampleTime, 0)
+                            ex.advance()
+                        }
+                    }
+                }
 
-                inputSurface.makeCurrent()
-                renderer.drawBitmap(filtered, outW, outH)
-                inputSurface.setPresentationTime(tUs * 1000)
-                inputSurface.swapBuffers()
-                filtered.recycle()
-
-                // Drain encoder
-                videoOutIndex = drainEncoder(encoder, muxer, bufferInfo, videoOutIndex,
-                    endOfStream = false, muxerStartedRef = { muxerStarted = it },
-                    audioAddedTrack = audioOutIndex, isMuxerStarted = { muxerStarted },
-                    onMuxerStart = { muxer!!.start() })
-
-                onProgress(((f + 1) * 100) / frameCount)
+                // Drain the decoder, filtering + encoding each frame.
+                val outIdx = decoder.dequeueOutputBuffer(decBufferInfo, timeoutUs)
+                if (outIdx >= 0) {
+                    val doRender = decBufferInfo.size != 0
+                    val eos = decBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+                    decoder.releaseOutputBuffer(outIdx, doRender)
+                    if (doRender && decOut.awaitNewImage()) {
+                        decOut.getTransformMatrix(stMatrix)
+                        Matrix.multiplyMM(combined, 0, stMatrix, 0, rot, 0)
+                        prog.draw(decOut.textureId, combined, outW, outH)
+                        inputSurface.setPresentationTime(decBufferInfo.presentationTimeUs * 1000)
+                        inputSurface.swapBuffers()
+                        videoOutIndex = drainEncoder(
+                            encoder, muxer, encBufferInfo, videoOutIndex, endOfStream = false,
+                            muxerStartedRef = { muxerStarted = it }, audioAddedTrack = audioOutIndex,
+                            isMuxerStarted = { muxerStarted }, onMuxerStart = { muxer!!.start() }
+                        )
+                        if (durUs > 0) {
+                            onProgress((decBufferInfo.presentationTimeUs * 100 / durUs).toInt().coerceIn(0, 99))
+                        }
+                    }
+                    if (eos) outputDone = true
+                }
             }
 
-            // Signal EOS + final drain
+            // Flush the encoder.
             encoder.signalEndOfInputStream()
-            videoOutIndex = drainEncoder(encoder, muxer, bufferInfo, videoOutIndex,
-                endOfStream = true, muxerStartedRef = { muxerStarted = it },
-                audioAddedTrack = audioOutIndex, isMuxerStarted = { muxerStarted },
-                onMuxerStart = { muxer!!.start() })
+            videoOutIndex = drainEncoder(
+                encoder, muxer, encBufferInfo, videoOutIndex, endOfStream = true,
+                muxerStartedRef = { muxerStarted = it }, audioAddedTrack = audioOutIndex,
+                isMuxerStarted = { muxerStarted }, onMuxerStart = { muxer!!.start() }
+            )
 
             // --- Copy audio samples ---
             if (audio != null && audioOutIndex >= 0) {
@@ -141,6 +185,7 @@ class VideoFilterRenderer(
                 copyAudio(audio, muxer, audioOutIndex)
             }
 
+            onProgress(100)
             true
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
@@ -148,10 +193,13 @@ class VideoFilterRenderer(
             android.util.Log.e("VideoFilterRenderer", "render failed", e)
             false
         } finally {
-            runCatching { mmr.release() }
+            runCatching { decoder?.stop() }
+            runCatching { decoder?.release() }
+            runCatching { decoderOutput?.release() }
+            runCatching { extractor?.release() }
             runCatching { encoder?.stop() }
             runCatching { encoder?.release() }
-            runCatching { renderer?.release() }
+            runCatching { program?.release() }
             runCatching { inputSurface?.release() }
             runCatching { muxer?.stop() }
             runCatching { muxer?.release() }
