@@ -81,8 +81,8 @@ class VideoFilterRenderer(
             ex.selectTrack(videoTrackIdx)
             val inMime = inFormat.getString(MediaFormat.KEY_MIME)!!
             // Fail fast with a clear reason instead of letting MediaCodec.createDecoderByType()
-            // below throw an opaque error: some sources (e.g. AV1 video from yt-dlp/WebM
-            // downloads) have no decoder on many devices.
+            // below throw an opaque error: some video codecs (e.g. AV1) have no decoder on many
+            // devices.
             if (MediaCodecList(MediaCodecList.REGULAR_CODECS).findDecoderForFormat(inFormat) == null) {
                 throw UnsupportedOperationException("no decoder available for $inMime")
             }
@@ -132,9 +132,8 @@ class VideoFilterRenderer(
 
             // --- Audio ---
             // Try a direct copy first (fast, no quality loss) -- most sources are already
-            // AAC. If the MP4 muxer rejects the format (e.g. Opus, common in yt-dlp/WebM
-            // downloads: MediaMuxer's MP4 output has never universally accepted it), transcode
-            // to AAC instead of dropping audio outright.
+            // AAC. If the MP4 muxer rejects the format (e.g. Opus: MediaMuxer's MP4 output has
+            // never universally accepted it), transcode to AAC instead of dropping audio outright.
             audio = openAudioTrack(uri)
             var audioOutIndex = -1
             audio?.let { a ->
@@ -330,8 +329,8 @@ class VideoFilterRenderer(
 
     /**
      * Decodes the source's audio track fully to PCM then re-encodes it as AAC, which the MP4
-     * muxer always accepts (unlike some source codecs -- e.g. Opus from yt-dlp/WebM downloads,
-     * which [render] tries as a direct copy first and falls back to this on failure).
+     * muxer always accepts (unlike some source codecs -- e.g. Opus -- which [render] tries as a
+     * direct copy first and falls back to this on failure).
      * Returns null if there's no audio track, or it can't be decoded/encoded either.
      */
     private fun CoroutineScope.transcodeAudioToAac(uri: Uri): TranscodedAudio? {
