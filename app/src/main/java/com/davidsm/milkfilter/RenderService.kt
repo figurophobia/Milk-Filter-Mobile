@@ -5,9 +5,11 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import kotlinx.coroutines.CoroutineScope
@@ -27,6 +29,7 @@ class RenderService : Service() {
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var renderJob: Job? = null
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -41,6 +44,10 @@ class RenderService : Service() {
 
         createChannel()
         startForeground(NOTIF_ID, buildNotification(0, ongoing = true))
+        // Keep the CPU (and, on most vendors, the GPU/codec power domains gated off it) awake
+        // for the whole render: a screen lock mid-render must not let the system suspend the
+        // hardware decode/encode session, or frames come back black or with a stale rotation.
+        acquireWakeLock()
 
         val uri = intent.getStringExtra(EX_URI)?.let { Uri.parse(it) }
         val outPath = intent.getStringExtra(EX_OUT)
@@ -65,19 +72,20 @@ class RenderService : Service() {
 
         RenderBus.state.value = RenderBus.State.Running(0)
         renderJob = scope.launch {
-            val ok = try {
-                VideoFilterRenderer(applicationContext, contentResolver).render(
+            val (ok: Boolean, failureReason: String?) = try {
+                val success = VideoFilterRenderer(applicationContext, contentResolver).render(
                     uri, info, filter, dither, milk, File(outPath)
                 ) { pct ->
                     RenderBus.state.value = RenderBus.State.Running(pct)
                     NotificationManagerCompat.from(this@RenderService)
                         .notify(NOTIF_ID, buildNotification(pct, ongoing = true))
                 }
+                success to null
             } catch (e: kotlinx.coroutines.CancellationException) {
-                false
+                false to null
             } catch (e: Exception) {
                 android.util.Log.e("RenderService", "render failed", e)
-                false
+                false to e.message
             }
 
             when {
@@ -87,7 +95,7 @@ class RenderService : Service() {
                     showResultNotification(getString(R.string.render_done_title))
                 }
                 else -> {
-                    RenderBus.state.value = RenderBus.State.Failed
+                    RenderBus.state.value = RenderBus.State.Failed(failureReason)
                     showResultNotification(getString(R.string.render_failed_title))
                 }
             }
@@ -98,17 +106,33 @@ class RenderService : Service() {
 
     override fun onDestroy() {
         scope.cancel()
+        releaseWakeLock()
         super.onDestroy()
     }
 
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MilkFilter:render").apply {
+            setReferenceCounted(false)
+            acquire(30 * 60 * 1000L) // safety timeout; released explicitly once the render ends
+        }
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.let { if (it.isHeld) runCatching { it.release() } }
+        wakeLock = null
+    }
+
     private fun stopSelfCompat() {
+        releaseWakeLock()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_REMOVE)
         else @Suppress("DEPRECATION") stopForeground(true)
         stopSelf()
     }
 
     private fun finishFailed() {
-        RenderBus.state.value = RenderBus.State.Failed
+        RenderBus.state.value = RenderBus.State.Failed()
         stopSelfCompat()
     }
 

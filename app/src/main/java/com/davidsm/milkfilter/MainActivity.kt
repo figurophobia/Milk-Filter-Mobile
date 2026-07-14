@@ -55,6 +55,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var resultImage:      ImageView
     private lateinit var emptyPlaceholder: FrameLayout
     private lateinit var titleText:        TextView
+    private lateinit var backBtn:          Button
     private lateinit var resetBtn:         Button
     private lateinit var doneBtn:          Button
     private lateinit var bottomBar:        FrameLayout
@@ -114,7 +115,7 @@ class MainActivity : AppCompatActivity() {
             "paletteColors"  to "COLORS",       "pointillism"   to "POINTILLISM",
             "compression"    to "COMPRESSION",  "level"         to "LEVEL",
             "on"             to "ON",           "off"           to "OFF",
-            "reset"          to "RESET",
+            "reset"          to "RESET",         "back"          to "BACK",
             "toolFilter"     to "FILTER",       "toolPalette"   to "PALETTE",
             "placeholderTap" to "Tap to add\nan image",
             "btnEdit"        to "EDIT",         "btnDone"       to "DONE",
@@ -134,7 +135,7 @@ class MainActivity : AppCompatActivity() {
             "paletteColors"  to "COLORES",      "pointillism"   to "PUNTILLISMO",
             "compression"    to "COMPRESION",   "level"         to "NIVEL",
             "on"             to "ON",           "off"           to "OFF",
-            "reset"          to "RESET",
+            "reset"          to "RESET",         "back"          to "ATRÁS",
             "toolFilter"     to "FILTRO",       "toolPalette"   to "PALETA",
             "placeholderTap" to "Toca para añadir\nuna imagen",
             "btnEdit"        to "EDITAR",       "btnDone"       to "LISTO",
@@ -174,7 +175,7 @@ class MainActivity : AppCompatActivity() {
                     when (st) {
                         is RenderBus.State.Running -> { isRendering = true; enterRenderingUi(st.progress) }
                         is RenderBus.State.Done -> { RenderBus.state.value = RenderBus.State.Idle; onRenderDone(st.path) }
-                        is RenderBus.State.Failed -> { RenderBus.state.value = RenderBus.State.Idle; onRenderFailed() }
+                        is RenderBus.State.Failed -> { RenderBus.state.value = RenderBus.State.Idle; onRenderFailed(st.reason) }
                         RenderBus.State.Idle -> {}
                     }
                 }
@@ -184,7 +185,17 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (currentVideo != null) previewGl.onResumePreview()
+        // Don't resume the live GL preview's own decoder unless it's actually the visible view
+        // (not e.g. hidden behind resultVideo in POST_EDIT, which decodes the exported file
+        // itself), and not while a background render is using the same source video: on many
+        // devices only a handful of hardware codec sessions can run concurrently, and racing
+        // two of them corrupts frames -- including in the exported file, not just on screen.
+        // (isRendering can lag one collector tick behind a process recreation, so also check
+        // RenderBus directly.)
+        val renderActive = isRendering || RenderBus.state.value is RenderBus.State.Running
+        if (currentVideo != null && previewGl.visibility == View.VISIBLE && !renderActive) {
+            previewGl.onResumePreview()
+        }
     }
 
     override fun onPause() {
@@ -202,6 +213,7 @@ class MainActivity : AppCompatActivity() {
         resultImage      = findViewById(R.id.resultImage)
         emptyPlaceholder = findViewById(R.id.emptyPlaceholder)
         titleText        = findViewById(R.id.titleText)
+        backBtn          = findViewById(R.id.backBtn)
         resetBtn         = findViewById(R.id.resetBtn)
         doneBtn          = findViewById(R.id.doneBtn)
         bottomBar        = findViewById(R.id.bottomBar)
@@ -218,6 +230,7 @@ class MainActivity : AppCompatActivity() {
         previewGl        = findViewById(R.id.previewGl)
 
         findViewById<TextView>(R.id.placeholderText).text = t("placeholderTapMedia")
+        backBtn.text      = t("back")
         resetBtn.text     = t("reset")
         doneBtn.text      = t("btnDone")
         editBtn.text      = t("btnEdit")
@@ -234,6 +247,7 @@ class MainActivity : AppCompatActivity() {
         previewGl.setOnClickListener(pickOnTap)
         editBtn.setOnClickListener          { enterEditMode() }
         editAgainBtn.setOnClickListener     { enterEditMode() }
+        backBtn.setOnClickListener          { openPicker() }
         resetBtn.setOnClickListener         { resetCurrentFilter() }
         doneBtn.setOnClickListener {
             val v = currentVideo
@@ -247,6 +261,7 @@ class MainActivity : AppCompatActivity() {
         appState = newState
         emptyPlaceholder.visibility = if (newState == AppState.EMPTY)     View.VISIBLE else View.GONE
         titleText.visibility        = if (newState == AppState.EDITING)   View.GONE    else View.VISIBLE
+        backBtn.visibility          = if (newState == AppState.EDITING)   View.VISIBLE else View.GONE
         resetBtn.visibility         = if (newState == AppState.EDITING)   View.VISIBLE else View.GONE
         doneBtn.visibility          = if (newState == AppState.EDITING)   View.VISIBLE else View.GONE
         bottomBar.visibility        = if (newState == AppState.EMPTY)     View.GONE    else View.VISIBLE
@@ -609,6 +624,7 @@ class MainActivity : AppCompatActivity() {
     /** Rendering runs in EDITING; titleText is GONE there, so surface the % via the title. */
     private fun enterRenderingUi(pct: Int) {
         editPanel.visibility = View.GONE
+        backBtn.visibility = View.GONE
         resetBtn.visibility = View.GONE
         doneBtn.visibility = View.GONE
         titleText.visibility = View.VISIBLE
@@ -636,11 +652,12 @@ class MainActivity : AppCompatActivity() {
         applyState(AppState.POST_EDIT)
     }
 
-    private fun onRenderFailed() {
+    private fun onRenderFailed(reason: String? = null) {
         isRendering = false
         showProgress(false)
         titleText.text = t("appTitle")
-        Snackbar.make(findViewById(R.id.main), t("renderFailed"), Snackbar.LENGTH_LONG).show()
+        val msg = if (reason != null) "${t("renderFailed")}\n$reason" else t("renderFailed")
+        Snackbar.make(findViewById(R.id.main), msg, Snackbar.LENGTH_LONG).show()
         val v = currentVideo
         applyState(AppState.EDITING)
         if (v != null) startVideoSession(v.uri, v.info)

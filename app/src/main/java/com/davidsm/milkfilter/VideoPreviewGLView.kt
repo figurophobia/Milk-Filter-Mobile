@@ -55,7 +55,7 @@ class VideoPreviewGLView @JvmOverloads constructor(context: Context, attrs: Attr
         requestLayout()
         pendingUri = uri
         started = false
-        renderer.surfaceTexture?.let { queueStart(it) }
+        renderer.surfaceTexture?.let { queueStart(null, it) }
     }
 
     fun updateFilter(filter: String, dither: FilterProcessor.DitherState, milk: FilterProcessor.MilkState) {
@@ -80,16 +80,38 @@ class VideoPreviewGLView @JvmOverloads constructor(context: Context, attrs: Attr
         started = false
     }
 
-    /** Called from the GL thread when the SurfaceTexture exists; hop to main to wire up MediaPlayer. */
-    private fun onSurfaceTextureReady(st: SurfaceTexture) {
-        post { queueStart(st) }
+    /** Called from the GL thread when a new SurfaceTexture exists; hop to main to wire up MediaPlayer. */
+    private fun onSurfaceTextureReady(old: SurfaceTexture?, st: SurfaceTexture) {
+        post { queueStart(old, st) }
     }
 
-    private fun queueStart(st: SurfaceTexture) {
+    private fun queueStart(old: SurfaceTexture?, st: SurfaceTexture) {
         val uri = pendingUri ?: return
-        if (started) return
+        st.setOnFrameAvailableListener { requestRender() }
+        val existing = player
+        if (started && existing != null) {
+            // The GL surface was torn down and recreated (screen lock, app switch, etc.) while
+            // a player was already attached: the old SurfaceTexture it was drawing into is gone,
+            // so the new one never receives a frame and the preview looks permanently black.
+            // Rebind the SAME player to the fresh SurfaceTexture instead of dropping it. Only
+            // release the old SurfaceTexture once the rebind has actually happened, so the
+            // decoder is never left mid-frame with no consumer attached at all.
+            val rebound = runCatching { existing.setSurface(Surface(st)) }.isSuccess
+            if (rebound) {
+                old?.let { runCatching { it.release() } }
+                requestRender()
+                return
+            }
+            // The player was in a transient state (e.g. still preparing) and rejected the new
+            // surface: fall through and rebuild it from scratch instead of leaving the preview
+            // permanently black with nothing to recover it.
+            runCatching { existing.release() }
+            player = null
+            started = false
+        }
         started = true
-        player?.let { runCatching { it.release() } }
+        old?.let { runCatching { it.release() } }
+        existing?.let { runCatching { it.release() } } // previous video's player (e.g. setVideo() with a new uri), if any
         val mp = MediaPlayer()
         player = mp
         runCatching {
@@ -104,7 +126,6 @@ class VideoPreviewGLView @JvmOverloads constructor(context: Context, attrs: Attr
             mp.setOnErrorListener { _, _, _ -> onError?.invoke(); true }
             mp.prepareAsync()
         }.onFailure { onError?.invoke() }
-        st.setOnFrameAvailableListener { requestRender() }
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -133,12 +154,18 @@ class VideoPreviewGLView @JvmOverloads constructor(context: Context, attrs: Attr
         private var viewH = 1
 
         override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
+            // The previous EGL context (if any) is already gone at this point, along with the
+            // OES texture it owned; only the SurfaceTexture's own native buffer queue survives
+            // and needs explicit release so it doesn't leak. Don't release it here though: the
+            // player may still be attached to it until queueStart (main thread) rebinds it to
+            // the new one below, so hand it off and let queueStart release it once that's done.
+            val old = surfaceTexture
             oesTex = createOesTexture()
             program.init()
             val st = SurfaceTexture(oesTex)
             surfaceTexture = st
             Matrix.setIdentityM(texMatrix, 0)
-            onSurfaceTextureReady(st)
+            onSurfaceTextureReady(old, st)
         }
 
         override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {

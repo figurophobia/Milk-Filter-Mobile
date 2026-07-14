@@ -256,9 +256,9 @@ Pick photo  →  EDIT  →  adjust controls  →  DONE  →  SHARE / DOWNLOAD
 - [x] Color palette selector
 - [x] Brightness, contrast, grain, pixel size, colors, pointillism, compression controls
 - [x] Share and download result
+- [x] Video support (GPU-accelerated live preview and export, with audio passthrough)
+- [x] Additional palettes
 - [ ] Before / after split view
-- [ ] Additional palettes
-- [ ] Video support
 
 See the [open issues](https://github.com/figurophobia/milk-filter-mobile/issues) for the full list of proposed features and known bugs.
 

@@ -90,8 +90,9 @@ class VideoFilterProgram {
                 mCon = FilterProcessor.MILK_LEVELS["contrast"]!![milk.contrastIdx]
                 mPunt = if (milk.pointillism) 0.7f else 1.0f
                 val key = FilterProcessor.MILK_PALETTE_KEYS[milk.paletteIdx]
-                mid1 = if (key == "milk1") 120f else 90f
-                mid2 = if (key == "milk1") 200f else 150f
+                val midpoints = FilterProcessor.milkMidpoints(key)
+                mid1 = midpoints.first.toFloat()
+                mid2 = midpoints.second.toFloat()
                 mComp = if (milk.compression) {
                     val level = FilterProcessor.MILK_COMPRESSION_LEVELS[milk.compressionLevelIdx]
                     max(0.05f, 1f - level / 110f)
@@ -222,14 +223,20 @@ class VideoFilterProgram {
     }
 
     companion object {
+        // vScreen is the RAW, untransformed quad coordinate: it always aligns 1:1 with the output
+        // viewport's own width/height axes (and therefore with uVideoRes), regardless of how the
+        // source texture itself is rotated/cropped. uTexMatrix (source rotation + SurfaceTexture
+        // crop) is applied per-fragment, AFTER any pixel-grid quantization -- not here -- so that
+        // quantizing in a rotated coordinate space (which desyncs it from uVideoRes's axes and
+        // makes pixel-art blocks render as rectangles instead of squares for 90/270-rotated
+        // videos) can't happen. See DITHER_FSH / MILK_FSH.
         private val VSH = """
             attribute vec4 aPosition;
             attribute vec4 aTexCoord;
-            uniform mat4 uTexMatrix;
-            varying vec2 vTex;
+            varying vec2 vScreen;
             void main() {
                 gl_Position = aPosition;
-                vTex = (uTexMatrix * aTexCoord).xy;
+                vScreen = aTexCoord.xy;
             }
         """.trimIndent()
 
@@ -237,9 +244,10 @@ class VideoFilterProgram {
         private val DITHER_FSH = """
             #extension GL_OES_EGL_image_external : require
             precision highp float;
-            varying vec2 vTex;
+            varying vec2 vScreen;
             uniform samplerExternalOES uTex;
             uniform sampler2D uBayer;
+            uniform mat4 uTexMatrix;
             uniform vec2 uVideoRes;
             uniform float uPixelScale;
             uniform float uBrightness;
@@ -248,9 +256,12 @@ class VideoFilterProgram {
             uniform int uNumColors;
             uniform vec3 uPalette[16];
             void main() {
+                // Quantize in screen space (aligned with uVideoRes) first, THEN map the quantized
+                // cell center into source-texture space -- keeps blocks square under any rotation.
                 vec2 blocks = max(vec2(1.0), floor(uVideoRes / uPixelScale));
-                vec2 cell = floor(vTex * blocks);
-                vec2 suv = (cell + 0.5) / blocks;
+                vec2 cell = floor(vScreen * blocks);
+                vec2 screenSuv = (cell + 0.5) / blocks;
+                vec2 suv = (uTexMatrix * vec4(screenSuv, 0.0, 1.0)).xy;
                 vec3 col = texture2D(uTex, suv).rgb;
                 float grey = dot(col, vec3(0.3, 0.59, 0.11));
                 float c = clamp((grey - 0.5) * uContrast + 0.5, 0.0, 1.0);
@@ -268,8 +279,9 @@ class VideoFilterProgram {
         private val MILK_FSH = """
             #extension GL_OES_EGL_image_external : require
             precision highp float;
-            varying vec2 vTex;
+            varying vec2 vScreen;
             uniform samplerExternalOES uTex;
+            uniform mat4 uTexMatrix;
             uniform vec2 uVideoRes;
             uniform float uMBri;
             uniform float uMCon;
@@ -287,18 +299,21 @@ class VideoFilterProgram {
                 return fract((p3.x + p3.y) * p3.z);
             }
             void main() {
-                vec2 suv = vTex;
+                // Quantize in screen space (aligned with uVideoRes) first, THEN map into source
+                // space -- keeps the compression grid (and grain) square under any rotation.
+                vec2 screenSuv = vScreen;
                 if (uComp > 0.0) {
                     vec2 blocks = max(vec2(1.0), floor(uVideoRes * uComp));
-                    vec2 cell = floor(vTex * blocks);
-                    suv = (cell + 0.5) / blocks;
+                    vec2 cell = floor(vScreen * blocks);
+                    screenSuv = (cell + 0.5) / blocks;
                 }
+                vec2 suv = (uTexMatrix * vec4(screenSuv, 0.0, 1.0)).xy;
                 vec3 col = texture2D(uTex, suv).rgb * 255.0;
                 float lum = (col.r + col.g + col.b) / 3.0;
                 lum = ((lum / 255.0 - 0.5) * uMCon + 0.5) * 255.0;
                 lum = pow(clamp(lum / 255.0, 0.0, 1.0), uMBri) * 255.0;
                 // Noise is always per source pixel (fine grain), independent of the color grid.
-                float noise = hash(floor(vTex * uVideoRes));
+                float noise = hash(floor(vScreen * uVideoRes));
                 vec3 c;
                 if (lum <= 25.0) c = uC0;
                 else if (lum <= 70.0) c = (noise < uPunt) ? uC0 : uC1;

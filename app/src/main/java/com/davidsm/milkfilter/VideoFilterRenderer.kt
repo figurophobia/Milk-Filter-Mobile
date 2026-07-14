@@ -4,6 +4,7 @@ import android.content.ContentResolver
 import android.content.Context
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
+import android.media.MediaCodecList
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
@@ -12,6 +13,7 @@ import android.opengl.Matrix
 import com.davidsm.milkfilter.gl.CodecInputSurface
 import com.davidsm.milkfilter.gl.DecoderOutputSurface
 import com.davidsm.milkfilter.gl.VideoFilterProgram
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -28,7 +30,9 @@ class VideoFilterRenderer(
      * the original audio copied through. No per-frame seeks and no CPU per-pixel work, so it runs
      * close to real time and the export looks exactly like the preview.
      *
-     * Returns true on success. onProgress reports 0..100.
+     * Returns true on success. onProgress reports 0..100. Throws on failure (except when
+     * cancelled) so the caller gets the real reason instead of a bare `false` -- e.g. an
+     * unsupported source video codec raises [UnsupportedOperationException] with the mime type.
      */
     suspend fun render(
         uri: Uri,
@@ -58,6 +62,7 @@ class VideoFilterRenderer(
         var extractor: MediaExtractor? = null
         var muxer: MediaMuxer? = null
         var audio: AudioTrack? = null
+        var transcodedAudio: TranscodedAudio? = null
 
         try {
             // --- Video extractor / decoder source track ---
@@ -75,6 +80,12 @@ class VideoFilterRenderer(
             if (videoTrackIdx < 0 || inFormat == null) return@withContext false
             ex.selectTrack(videoTrackIdx)
             val inMime = inFormat.getString(MediaFormat.KEY_MIME)!!
+            // Fail fast with a clear reason instead of letting MediaCodec.createDecoderByType()
+            // below throw an opaque error: some sources (e.g. AV1 video from yt-dlp/WebM
+            // downloads) have no decoder on many devices.
+            if (MediaCodecList(MediaCodecList.REGULAR_CODECS).findDecoderForFormat(inFormat) == null) {
+                throw UnsupportedOperationException("no decoder available for $inMime")
+            }
 
             // --- Encoder (H.264) + its GL context ---
             val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, outW, outH).apply {
@@ -92,7 +103,12 @@ class VideoFilterRenderer(
             inputSurface.makeCurrent()
             val prog = VideoFilterProgram().also { it.init() }
             program = prog
-            prog.setParams(filter, dither, milk, uprightW, uprightH)
+            // Use outW/outH (the actual render-target size draw() below uses for glViewport),
+            // not uprightW/uprightH: fitWithinCap rounds width and height independently, so the
+            // two can end up with a very slightly different aspect ratio. Sizing the pixelation
+            // grid off the pre-rounding dimensions then stretches each "square" block to fit the
+            // differently-proportioned viewport, rendering as visibly rectangular pixels.
+            prog.setParams(filter, dither, milk, outW, outH)
 
             // --- Decoder renders into an OES texture on the encoder's GL context ---
             val decOut = DecoderOutputSurface()
@@ -114,10 +130,32 @@ class VideoFilterRenderer(
 
             muxer = MediaMuxer(outFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
 
-            // --- Audio passthrough ---
+            // --- Audio ---
+            // Try a direct copy first (fast, no quality loss) -- most sources are already
+            // AAC. If the MP4 muxer rejects the format (e.g. Opus, common in yt-dlp/WebM
+            // downloads: MediaMuxer's MP4 output has never universally accepted it), transcode
+            // to AAC instead of dropping audio outright.
             audio = openAudioTrack(uri)
             var audioOutIndex = -1
-            if (audio != null) audioOutIndex = muxer.addTrack(audio.format)
+            audio?.let { a ->
+                audioOutIndex = try {
+                    muxer.addTrack(a.format)
+                } catch (e: Exception) {
+                    android.util.Log.w(
+                        "VideoFilterRenderer",
+                        "audio track (${a.format.getString(MediaFormat.KEY_MIME)}) rejected by MP4 muxer, transcoding to AAC instead", e
+                    )
+                    -1
+                }
+            }
+            if (audioOutIndex < 0) {
+                runCatching { audio?.extractor?.release() }
+                audio = null
+                transcodedAudio = runCatching { transcodeAudioToAac(uri) }
+                    .onFailure { android.util.Log.w("VideoFilterRenderer", "audio transcode to AAC failed, continuing without audio", it) }
+                    .getOrNull()
+                transcodedAudio?.let { t -> audioOutIndex = muxer.addTrack(t.format) }
+            }
 
             val encBufferInfo = MediaCodec.BufferInfo()
             val decBufferInfo = MediaCodec.BufferInfo()
@@ -179,19 +217,15 @@ class VideoFilterRenderer(
                 isMuxerStarted = { muxerStarted }, onMuxerStart = { muxer!!.start() }
             )
 
-            // --- Copy audio samples ---
-            if (audio != null && audioOutIndex >= 0) {
+            // --- Write audio samples (direct copy or transcoded, whichever succeeded above) ---
+            if (audioOutIndex >= 0) {
                 if (!muxerStarted) { muxer.start(); muxerStarted = true }
-                copyAudio(audio, muxer, audioOutIndex)
+                audio?.let { a -> copyAudio(a, muxer, audioOutIndex) }
+                transcodedAudio?.let { t -> writeTranscodedAudio(t, muxer, audioOutIndex) }
             }
 
             onProgress(100)
             true
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            android.util.Log.e("VideoFilterRenderer", "render failed", e)
-            false
         } finally {
             runCatching { decoder?.stop() }
             runCatching { decoder?.release() }
@@ -288,6 +322,146 @@ class VideoFilterRenderer(
                 MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
             muxer.writeSampleData(outTrack, buffer, info)
             ex.advance()
+        }
+    }
+
+    private class AacSample(val data: ByteArray, val presentationTimeUs: Long, val flags: Int)
+    private class TranscodedAudio(val format: MediaFormat, val samples: List<AacSample>)
+
+    /**
+     * Decodes the source's audio track fully to PCM then re-encodes it as AAC, which the MP4
+     * muxer always accepts (unlike some source codecs -- e.g. Opus from yt-dlp/WebM downloads,
+     * which [render] tries as a direct copy first and falls back to this on failure).
+     * Returns null if there's no audio track, or it can't be decoded/encoded either.
+     */
+    private fun CoroutineScope.transcodeAudioToAac(uri: Uri): TranscodedAudio? {
+        val ex = MediaExtractor()
+        var decoder: MediaCodec? = null
+        var encoder: MediaCodec? = null
+        try {
+            resolver.openFileDescriptor(uri, "r")!!.use { pfd -> ex.setDataSource(pfd.fileDescriptor) }
+            var trackIdx = -1
+            var inFormat: MediaFormat? = null
+            for (i in 0 until ex.trackCount) {
+                val fmt = ex.getTrackFormat(i)
+                if ((fmt.getString(MediaFormat.KEY_MIME) ?: "").startsWith("audio/")) { trackIdx = i; inFormat = fmt; break }
+            }
+            if (trackIdx < 0 || inFormat == null) return null
+            ex.selectTrack(trackIdx)
+            val inMime = inFormat.getString(MediaFormat.KEY_MIME)!!
+            if (MediaCodecList(MediaCodecList.REGULAR_CODECS).findDecoderForFormat(inFormat) == null) return null
+
+            val sampleRate = inFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+            val channelCount = inFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+
+            val dec = MediaCodec.createDecoderByType(inMime)
+            decoder = dec
+            dec.configure(inFormat, null, null, 0)
+            dec.start()
+
+            val aacFormat = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, channelCount).apply {
+                setInteger(MediaFormat.KEY_BIT_RATE, 128_000)
+                setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+            }
+            val enc = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+            encoder = enc
+            enc.configure(aacFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            enc.start()
+
+            val samples = mutableListOf<AacSample>()
+            var outFormat: MediaFormat? = null
+            val timeoutUs = 10_000L
+            var decInputDone = false
+            var decOutputDone = false
+            var encOutputDone = false
+
+            while (!encOutputDone) {
+                ensureActive()
+
+                // Feed the decoder from the extractor.
+                if (!decInputDone) {
+                    val inIdx = dec.dequeueInputBuffer(timeoutUs)
+                    if (inIdx >= 0) {
+                        val buf = dec.getInputBuffer(inIdx)!!
+                        val sz = ex.readSampleData(buf, 0)
+                        if (sz < 0) {
+                            dec.queueInputBuffer(inIdx, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                            decInputDone = true
+                        } else {
+                            dec.queueInputBuffer(inIdx, 0, sz, ex.sampleTime, 0)
+                            ex.advance()
+                        }
+                    }
+                }
+
+                // Drain the decoder's PCM straight into the encoder.
+                if (!decOutputDone) {
+                    val decInfo = MediaCodec.BufferInfo()
+                    val outIdx = dec.dequeueOutputBuffer(decInfo, timeoutUs)
+                    if (outIdx >= 0) {
+                        val eos = decInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+                        if (decInfo.size > 0) {
+                            val pcm = dec.getOutputBuffer(outIdx)!!
+                            pcm.position(decInfo.offset); pcm.limit(decInfo.offset + decInfo.size)
+                            var remaining = decInfo.size
+                            while (remaining > 0) {
+                                ensureActive()
+                                val encInIdx = enc.dequeueInputBuffer(timeoutUs)
+                                if (encInIdx < 0) continue
+                                val encBuf = enc.getInputBuffer(encInIdx)!!
+                                val chunk = minOf(remaining, encBuf.capacity())
+                                val savedLimit = pcm.limit()
+                                pcm.limit(pcm.position() + chunk)
+                                encBuf.clear(); encBuf.put(pcm)
+                                pcm.limit(savedLimit)
+                                enc.queueInputBuffer(encInIdx, 0, chunk, decInfo.presentationTimeUs, 0)
+                                remaining -= chunk
+                            }
+                        }
+                        dec.releaseOutputBuffer(outIdx, false)
+                        if (eos) {
+                            decOutputDone = true
+                            var encInIdx = -1
+                            while (encInIdx < 0) { ensureActive(); encInIdx = enc.dequeueInputBuffer(timeoutUs) }
+                            enc.queueInputBuffer(encInIdx, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                        }
+                    }
+                }
+
+                // Drain the encoder's AAC output.
+                val encInfo = MediaCodec.BufferInfo()
+                val encOutIdx = enc.dequeueOutputBuffer(encInfo, timeoutUs)
+                when {
+                    encOutIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> outFormat = enc.outputFormat
+                    encOutIdx >= 0 -> {
+                        if (encInfo.size > 0 && encInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0) {
+                            val buf = enc.getOutputBuffer(encOutIdx)!!
+                            buf.position(encInfo.offset); buf.limit(encInfo.offset + encInfo.size)
+                            val copy = ByteArray(encInfo.size)
+                            buf.get(copy)
+                            samples.add(AacSample(copy, encInfo.presentationTimeUs, encInfo.flags))
+                        }
+                        enc.releaseOutputBuffer(encOutIdx, false)
+                        if (encInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) encOutputDone = true
+                    }
+                }
+            }
+
+            return outFormat?.let { TranscodedAudio(it, samples) }
+        } finally {
+            runCatching { decoder?.stop() }
+            runCatching { decoder?.release() }
+            runCatching { encoder?.stop() }
+            runCatching { encoder?.release() }
+            runCatching { ex.release() }
+        }
+    }
+
+    private fun writeTranscodedAudio(transcoded: TranscodedAudio, muxer: MediaMuxer, outTrack: Int) {
+        val info = MediaCodec.BufferInfo()
+        for (s in transcoded.samples) {
+            info.set(0, s.data.size, s.presentationTimeUs, s.flags)
+            muxer.writeSampleData(outTrack, ByteBuffer.wrap(s.data), info)
         }
     }
 }

@@ -20,10 +20,15 @@ object FilterProcessor {
         42, 26, 38, 22, 41, 25, 37, 21
     )
 
-    val DITHER_PALETTE_KEYS = listOf("purple", "milk1", "milk2", "earth", "dark-green", "olive", "greyscale")
+    val DITHER_PALETTE_KEYS = listOf(
+        "purple", "milk1", "milk2", "earth", "dark-green", "olive", "greyscale",
+        "blood", "toxic", "ocean", "sunset", "ice", "amber"
+    )
     val DITHER_PALETTE_LABELS = mapOf(
         "purple" to "Purple", "milk1" to "Milk 1", "milk2" to "Milk 2",
-        "earth" to "Earth", "dark-green" to "Green", "olive" to "Olive", "greyscale" to "Grey"
+        "earth" to "Earth", "dark-green" to "Green", "olive" to "Olive", "greyscale" to "Grey",
+        "blood" to "Blood", "toxic" to "Toxic", "ocean" to "Ocean", "sunset" to "Sunset",
+        "ice" to "Ice", "amber" to "Amber"
     )
     val DITHER_PALETTES: Map<String, List<IntArray>> = mapOf(
         "purple"     to listOf(intArrayOf(0, 0, 0), intArrayOf(31, 0, 102), intArrayOf(146, 0, 137)),
@@ -32,7 +37,13 @@ object FilterProcessor {
         "earth"      to listOf(intArrayOf(0, 0, 0), intArrayOf(25, 105, 44), intArrayOf(224, 110, 22), intArrayOf(247, 219, 126)),
         "dark-green" to listOf(intArrayOf(29, 1, 16), intArrayOf(26, 23, 28), intArrayOf(40, 83, 67), intArrayOf(150, 215, 173)),
         "olive"      to listOf(intArrayOf(16, 1, 29), intArrayOf(28, 23, 26), intArrayOf(67, 83, 40), intArrayOf(173, 215, 150)),
-        "greyscale"  to listOf(intArrayOf(0, 0, 0), intArrayOf(85, 85, 85), intArrayOf(170, 170, 170), intArrayOf(255, 255, 255))
+        "greyscale"  to listOf(intArrayOf(0, 0, 0), intArrayOf(85, 85, 85), intArrayOf(170, 170, 170), intArrayOf(255, 255, 255)),
+        "blood"      to listOf(intArrayOf(0, 0, 0), intArrayOf(61, 7, 26), intArrayOf(155, 17, 30), intArrayOf(219, 94, 47)),
+        "toxic"      to listOf(intArrayOf(5, 10, 5), intArrayOf(23, 68, 41), intArrayOf(68, 137, 26), intArrayOf(167, 222, 87)),
+        "ocean"      to listOf(intArrayOf(2, 4, 20), intArrayOf(10, 44, 84), intArrayOf(18, 110, 140), intArrayOf(170, 238, 238)),
+        "sunset"     to listOf(intArrayOf(30, 7, 51), intArrayOf(133, 32, 74), intArrayOf(238, 110, 66), intArrayOf(255, 208, 113)),
+        "ice"        to listOf(intArrayOf(10, 15, 30), intArrayOf(45, 90, 130), intArrayOf(120, 190, 210), intArrayOf(230, 250, 255)),
+        "amber"      to listOf(intArrayOf(20, 12, 8), intArrayOf(92, 58, 33), intArrayOf(168, 110, 58), intArrayOf(237, 201, 143))
     )
     val DITHER_LEVELS = mapOf(
         "brightness"    to floatArrayOf(0.4f, 0.6f, 0.8f, 1.0f, 1.3f, 1.6f, 2.0f),
@@ -42,12 +53,30 @@ object FilterProcessor {
         "paletteColors" to floatArrayOf(2f, 3f, 4f, 5f, 6f, 7f, 8f, 10f, 12f, 14f, 16f)
     )
 
-    val MILK_PALETTE_KEYS = listOf("milk1", "milk2")
-    val MILK_PALETTE_LABELS = mapOf("milk1" to "Milk 1", "milk2" to "Milk 2")
-    val MILK_PALETTES: Map<String, List<IntArray>> = mapOf(
-        "milk1" to listOf(intArrayOf(0, 0, 0), intArrayOf(102, 0, 31), intArrayOf(137, 0, 146)),
-        "milk2" to listOf(intArrayOf(0, 0, 0), intArrayOf(92, 36, 60), intArrayOf(203, 43, 43))
+    val MILK_PALETTE_KEYS = listOf("milk1", "milk2", "toxic", "ocean", "sunset")
+    val MILK_PALETTE_LABELS = mapOf(
+        "milk1" to "Milk 1", "milk2" to "Milk 2",
+        "toxic" to "Toxic", "ocean" to "Ocean", "sunset" to "Sunset"
     )
+    val MILK_PALETTES: Map<String, List<IntArray>> = mapOf(
+        "milk1"  to listOf(intArrayOf(0, 0, 0), intArrayOf(102, 0, 31), intArrayOf(137, 0, 146)),
+        "milk2"  to listOf(intArrayOf(0, 0, 0), intArrayOf(92, 36, 60), intArrayOf(203, 43, 43)),
+        "toxic"  to listOf(intArrayOf(5, 10, 5), intArrayOf(46, 125, 50), intArrayOf(178, 255, 89)),
+        "ocean"  to listOf(intArrayOf(2, 10, 26), intArrayOf(20, 90, 140), intArrayOf(150, 230, 255)),
+        "sunset" to listOf(intArrayOf(25, 5, 40), intArrayOf(180, 60, 40), intArrayOf(255, 190, 90))
+    )
+    /** Per-palette luminance thresholds (mid1, mid2) for the 3-band Milk quantization. */
+    val MILK_PALETTE_MIDPOINTS: Map<String, Pair<Int, Int>> = mapOf(
+        "milk1"  to (120 to 200),
+        "milk2"  to (90 to 150),
+        "toxic"  to (90 to 150),
+        "ocean"  to (90 to 150),
+        "sunset" to (110 to 180)
+    )
+    private val DEFAULT_MILK_MIDPOINTS = 90 to 150
+
+    /** [MILK_PALETTE_MIDPOINTS] lookup with a safe fallback for any key without an explicit entry. */
+    fun milkMidpoints(key: String): Pair<Int, Int> = MILK_PALETTE_MIDPOINTS[key] ?: DEFAULT_MILK_MIDPOINTS
     val MILK_LEVELS = mapOf(
         "brightness" to floatArrayOf(0.4f, 0.6f, 0.8f, 1.0f, 1.3f, 1.6f, 2.0f),
         "contrast"   to floatArrayOf(0.4f, 0.6f, 0.8f, 1.0f, 1.3f, 1.6f, 2.0f)
@@ -156,8 +185,7 @@ object FilterProcessor {
         val key = MILK_PALETTE_KEYS[state.paletteIdx]
         val colors = MILK_PALETTES[key]!!
         val punt = if (state.pointillism) 0.7f else 1.0f
-        val mid1 = if (key == "milk1") 120 else 90
-        val mid2 = if (key == "milk1") 200 else 150
+        val (mid1, mid2) = milkMidpoints(key)
         val adjustBC = mBri != 1.0f || mCon != 1.0f
 
         val w = source.width; val h = source.height

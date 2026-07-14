@@ -25,6 +25,8 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:visibility="gone"
+        app:layout_constrainedWidth="true"
+        app:layout_constrainedHeight="true"
         app:layout_constraintTop_toBottomOf="@id/topBar"
         app:layout_constraintBottom_toTopOf="@id/bottomBar"
         app:layout_constraintStart_toStartOf="parent"
@@ -35,6 +37,8 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:visibility="gone"
+        app:layout_constrainedWidth="true"
+        app:layout_constrainedHeight="true"
         app:layout_constraintTop_toBottomOf="@id/topBar"
         app:layout_constraintBottom_toTopOf="@id/bottomBar"
         app:layout_constraintStart_toStartOf="parent"
@@ -106,14 +110,29 @@
             android:lineSpacingMultiplier="1.4" />
 
         <!-- Shown in EDITING state – left -->
-        <Button
-            android:id="@+id/resetBtn"
-            style="@style/PixelBtn.Action"
+        <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center_vertical|start"
-            android:text="RESET"
-            android:visibility="gone" />
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/backBtn"
+                style="@style/PixelBtn.Action"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="BACK"
+                android:visibility="gone" />
+
+            <Button
+                android:id="@+id/resetBtn"
+                style="@style/PixelBtn.Action"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="RESET"
+                android:visibility="gone" />
+        </LinearLayout>
 
         <!-- Shown in EDITING state – right -->
         <Button

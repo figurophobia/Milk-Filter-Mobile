@@ -12,7 +12,7 @@ object RenderBus {
         object Idle : State()
         data class Running(val progress: Int) : State()
         data class Done(val path: String) : State()
-        object Failed : State()
+        data class Failed(val reason: String? = null) : State()
     }
 
     val state = MutableStateFlow<State>(State.Idle)

@@ -11,14 +11,32 @@ android {
         applicationId = "com.davidsm.milkfilter"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "2.0"
+    }
+
+    // Release signing reads from ~/.gradle/gradle.properties (machine-local, never committed) so
+    // the same key is reused across every release build on this machine. Falls back to unsigned
+    // if those properties aren't set (e.g. a fresh checkout), rather than failing the build.
+    val releaseStoreFile = project.findProperty("MILKFILTER_RELEASE_STORE_FILE") as String?
+    signingConfigs {
+        if (releaseStoreFile != null) {
+            create("release") {
+                storeFile = file(releaseStoreFile)
+                storePassword = project.findProperty("MILKFILTER_RELEASE_STORE_PASSWORD") as String?
+                keyAlias = project.findProperty("MILKFILTER_RELEASE_KEY_ALIAS") as String?
+                keyPassword = project.findProperty("MILKFILTER_RELEASE_KEY_PASSWORD") as String?
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (releaseStoreFile != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
