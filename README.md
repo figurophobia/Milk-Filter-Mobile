@@ -107,15 +107,19 @@ Key highlights:
 Grab the ready-to-install Android APK — no build tools required:
 
 <div align="center">
-  <a href="https://github.com/figurophobia/Milk-Filter-Mobile/releases/download/v1.0.0/milk-filter-mobile-v1.0.0.apk">
-    <img src="https://img.shields.io/badge/Download-APK%20v1.0.0-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Download APK"/>
+  <a href="https://github.com/figurophobia/Milk-Filter-Mobile/releases/download/v2.0.0/milk-filter-mobile-v2.0.0.apk">
+    <img src="https://img.shields.io/badge/Download-APK%20v2.0.0-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Download APK"/>
   </a>
 </div>
 
-* **Direct download:** [milk-filter-mobile-v1.0.0.apk](https://github.com/figurophobia/Milk-Filter-Mobile/releases/download/v1.0.0/milk-filter-mobile-v1.0.0.apk)
+* **Direct download:** [milk-filter-mobile-v2.0.0.apk](https://github.com/figurophobia/Milk-Filter-Mobile/releases/download/v2.0.0/milk-filter-mobile-v2.0.0.apk)
 * **All versions:** [Releases page](https://github.com/figurophobia/Milk-Filter-Mobile/releases)
 
 > Requires Android 7.0 (API 24) or newer. On first install your device may ask you to allow *"Install from unknown sources"* for the browser or file manager you use to open the APK.
+
+> **Updating from v1.0.0?** It was signed with an ad-hoc debug key; v2.0.0 onward uses a proper
+> dedicated release key, so Android will refuse to install over v1.0.0 — uninstall it first. This
+> is a one-time issue: from v2.0.0 on, every release shares the same key and updates normally.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
